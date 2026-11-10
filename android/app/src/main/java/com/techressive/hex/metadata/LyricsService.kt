@@ -17,32 +17,44 @@ object LyricsService {
         val cacheKey = "${track.title}_${track.artist}".lowercase()
         lyricsCache[cacheKey]?.let { return@withContext it }
 
-        // 1. Check local companion .lrc file in track's parent directory
-        if (track.path.isNotBlank()) {
-            val audioFile = File(track.path)
-            val lrcFile = File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc")
-            if (lrcFile.exists() && lrcFile.canRead()) {
-                val parsed = parseLrc(lrcFile.readText())
-                if (parsed.isNotEmpty()) {
-                    lyricsCache[cacheKey] = parsed
-                    return@withContext parsed
+        // 1. Check local companion .lrc file in track's parent directory (or SAF tree)
+        try {
+            if (track.path.isNotBlank()) {
+                val audioFile = File(track.path)
+                val candidates = listOf(
+                    File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc"),
+                    File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.LRC"),
+                    File(audioFile.parentFile, "${track.title}.lrc")
+                )
+                for (cand in candidates) {
+                    if (cand.exists() && cand.canRead()) {
+                        val bytes = cand.readBytes()
+                        val text = decodeWithFallbackCharsets(bytes)
+                        val parsed = parseLrc(text)
+                        if (parsed.isNotEmpty()) {
+                            lyricsCache[cacheKey] = parsed
+                            return@withContext parsed
+                        }
+                    }
                 }
             }
-        }
+        } catch (_: Exception) {}
 
         // 2. Check disk cache
         val diskCacheDir = File(context.cacheDir, "lyrics")
         if (!diskCacheDir.exists()) diskCacheDir.mkdirs()
         val cacheFile = File(diskCacheDir, "${cacheKey.hashCode()}.lrc")
         if (cacheFile.exists()) {
-            val parsed = parseLrc(cacheFile.readText())
+            val bytes = cacheFile.readBytes()
+            val text = decodeWithFallbackCharsets(bytes)
+            val parsed = parseLrc(text)
             if (parsed.isNotEmpty()) {
                 lyricsCache[cacheKey] = parsed
                 return@withContext parsed
             }
         }
 
-        // 3. Query LRCLIB API
+        // 3. Query LRCLIB API with full UTF-8 encoding (supporting Persian, Arabic, East Asian, and European scripts)
         try {
             val tName = URLEncoder.encode(track.title, "UTF-8")
             val aName = URLEncoder.encode(track.artist, "UTF-8")
@@ -54,17 +66,19 @@ object LyricsService {
                 connectTimeout = 5000
                 readTimeout = 5000
                 setRequestProperty("User-Agent", "HEX-Audiophile-Android/1.0 (lyrics@hex.app)")
+                setRequestProperty("Accept-Charset", "UTF-8")
             }
 
             if (conn.responseCode == 200) {
-                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val bytes = conn.inputStream.use { it.readBytes() }
+                val response = decodeWithFallbackCharsets(bytes)
                 val json = JSONObject(response)
                 val syncedLyrics = json.optString("syncedLyrics", "")
                 if (syncedLyrics.isNotBlank()) {
                     val parsed = parseLrc(syncedLyrics)
                     if (parsed.isNotEmpty()) {
                         lyricsCache[cacheKey] = parsed
-                        cacheFile.writeText(syncedLyrics)
+                        cacheFile.writeText(syncedLyrics, Charsets.UTF_8)
                         conn.disconnect()
                         return@withContext parsed
                     }
@@ -116,6 +130,19 @@ object LyricsService {
         val step = if (totalDuration > 0) totalDuration / lines.size else 4.0
         return lines.mapIndexed { index, text ->
             LyricLine(timestamp = index * step, text = text)
+        }
+    }
+
+    private fun decodeWithFallbackCharsets(bytes: ByteArray): String {
+        return try {
+            String(bytes, java.nio.charset.StandardCharsets.UTF_8)
+        } catch (_: Exception) {
+            try {
+                // Windows-1256 (Arabic & Persian)
+                String(bytes, java.nio.charset.Charset.forName("windows-1256"))
+            } catch (_: Exception) {
+                String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+            }
         }
     }
 }

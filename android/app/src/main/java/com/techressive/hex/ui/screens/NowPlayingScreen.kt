@@ -82,20 +82,39 @@ fun NowPlayingScreen(
     val isFav = currentTrack?.let { appState.isFavorite(it) } ?: false
 
     val scrollState = rememberScrollState()
+    val themeMode by appState.themeMode.collectAsState()
 
-    // Dynamic gradient background derived from cover art and active skin
-    val bgBrush = Brush.verticalGradient(
-        colors = listOf(
-            primaryAccent.copy(alpha = 0.28f),
-            activeSkin.bgOled.copy(alpha = 0.85f),
-            activeSkin.bgOled
+    // Dynamic gradient background derived from cover art, active skin, and themeMode
+    val bgBrush = if (themeMode == com.techressive.hex.state.ThemeMode.LIGHT) {
+        Brush.verticalGradient(
+            colors = listOf(
+                primaryAccent.copy(alpha = 0.18f),
+                Color(0xFFF6F8FC).copy(alpha = 0.9f),
+                Color(0xFFF6F8FC)
+            )
         )
-    )
+    } else {
+        Brush.verticalGradient(
+            colors = listOf(
+                primaryAccent.copy(alpha = 0.28f),
+                activeSkin.bgOled.copy(alpha = 0.85f),
+                activeSkin.bgOled
+            )
+        )
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(bgBrush)
+            .androidx.compose.ui.input.pointer.pointerInput(Unit) {
+                androidx.compose.foundation.gestures.detectVerticalDragGestures { _, dragAmount ->
+                    // Swipe down gesture to go back!
+                    if (dragAmount > 38f) {
+                        appState.goBack()
+                    }
+                }
+            }
     ) {
         Column(
             modifier = Modifier
@@ -249,16 +268,7 @@ fun NowPlayingScreen(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
-
-            // 32-Band Visualizer (Compact)
-            FFTVisualizerView(
-                spectrumAnalyzer = appState.spectrumAnalyzer,
-                height = 24.dp,
-                primaryColor = primaryAccent,
-                secondaryColor = secondaryAccent
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
+            // Visualizer removed as requested for a cleaner, high-focus playback view
 
             // Waveform scrubber bar
             WaveformProgressBar(

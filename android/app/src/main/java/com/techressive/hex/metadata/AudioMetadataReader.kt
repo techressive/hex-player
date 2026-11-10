@@ -33,42 +33,57 @@ object AudioMetadataReader {
             else -> AudioCodec.UNKNOWN
         }
 
+        var sampleRate = 44100.0
+        var bitDepth = 16
+        var bitrate = 320000
+        var embeddedLyrics: String? = null
+
         try {
+            val extractMetadataFun: (MediaMetadataRetriever) -> Unit = { r ->
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { t -> if (t.isNotBlank()) title = t }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { a -> if (a.isNotBlank()) artist = a }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { al -> if (al.isNotBlank()) album = al }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { g -> if (g.isNotBlank()) genre = g }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { d -> durationMs = d }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()?.let { n -> trackNumber = n }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()?.let { y -> year = y }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull()?.let { b -> bitrate = b }
+                // Sample rate detection (API 29+)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_SAMPLERATE)?.toDoubleOrNull()?.let { sr ->
+                        if (sr > 0) sampleRate = sr
+                    }
+                    r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITS_PER_SAMPLE)?.toIntOrNull()?.let { bd ->
+                        if (bd > 0) bitDepth = bd
+                    }
+                }
+                // Check if bitrate suggests hi-res/lossless
+                if (bitDepth == 16 && (ext == "flac" || ext == "alac" || ext == "wav")) {
+                    if (bitrate > 2000000) {
+                        bitDepth = 24
+                    }
+                }
+                if (sampleRate == 44100.0 && (ext == "dsf" || ext == "dff")) {
+                    sampleRate = 2822400.0
+                    bitDepth = 1
+                }
+                embeddedPicBytes = r.embeddedPicture
+            }
+
             if (uri.scheme == "content") {
                 val pfd = context.contentResolver.openFileDescriptor(uri, "r")
                 if (pfd != null) {
                     pfd.use {
                         retriever.setDataSource(it.fileDescriptor)
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { t -> if (t.isNotBlank()) title = t }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { a -> if (a.isNotBlank()) artist = a }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { al -> if (al.isNotBlank()) album = al }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { g -> if (g.isNotBlank()) genre = g }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { d -> durationMs = d }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()?.let { n -> trackNumber = n }
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()?.let { y -> year = y }
-                        embeddedPicBytes = retriever.embeddedPicture
+                        extractMetadataFun(retriever)
                     }
                 } else {
                     retriever.setDataSource(context, uri)
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { t -> if (t.isNotBlank()) title = t }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { a -> if (a.isNotBlank()) artist = a }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { al -> if (al.isNotBlank()) album = al }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { g -> if (g.isNotBlank()) genre = g }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { d -> durationMs = d }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()?.let { n -> trackNumber = n }
-                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()?.let { y -> year = y }
-                    embeddedPicBytes = retriever.embeddedPicture
+                    extractMetadataFun(retriever)
                 }
             } else {
                 retriever.setDataSource(context, uri)
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let { t -> if (t.isNotBlank()) title = t }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let { a -> if (a.isNotBlank()) artist = a }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.let { al -> if (al.isNotBlank()) album = al }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { g -> if (g.isNotBlank()) genre = g }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { d -> durationMs = d }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.toIntOrNull()?.let { n -> trackNumber = n }
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()?.let { y -> year = y }
-                embeddedPicBytes = retriever.embeddedPicture
+                extractMetadataFun(retriever)
             }
         } catch (_: Exception) {
             // Fallback or ignore
@@ -124,8 +139,9 @@ object AudioMetadataReader {
             year = year,
             durationMs = durationMs,
             trackNumber = trackNumber,
-            sampleRate = 96000.0,
-            bitDepth = 24,
+            sampleRate = sampleRate,
+            bitDepth = bitDepth,
+            bitRate = bitrate,
             codec = codec,
             artworkUri = artworkUri
         )

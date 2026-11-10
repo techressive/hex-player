@@ -66,9 +66,12 @@ fun HomeScreen(
     val favorites by appState.favorites.collectAsState()
     val playCounts by appState.playCounts.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
+    val themeMode by appState.themeMode.collectAsState()
     val primaryAccent by appState.accentColorPrimary.collectAsState()
     val secondaryAccent by appState.accentColorSecondary.collectAsState()
     val isScanning by appState.isScanning.collectAsState()
+
+    val screenBg = if (themeMode == com.techressive.hex.state.ThemeMode.LIGHT) Color(0xFFF6F8FC) else activeSkin.bgOled
 
     val dirPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -94,7 +97,7 @@ fun HomeScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(activeSkin.bgOled)
+            .background(screenBg)
     ) {
         Column(
             modifier = Modifier

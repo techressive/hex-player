@@ -82,8 +82,16 @@ fun LibraryScreen(
     val artistSeparators by appState.artistSeparators.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val selectedTabIndex by appState.selectedLibraryTabIndex.collectAsState()
+    val trackSortOrder by appState.trackSortOrder.collectAsState()
+    val themeMode by appState.themeMode.collectAsState()
     val tabs = LibraryTab.values()
+
+    var showSortMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    val sortedTracks = remember(tracks, trackSortOrder) {
+        appState.getSortedTracks(tracks)
+    }
 
     // SAF Directory Picker Launcher
     val dirPickerLauncher = rememberLauncherForActivityResult(
@@ -92,10 +100,12 @@ fun LibraryScreen(
         uri?.let { appState.importDirectoryUri(it) }
     }
 
+    val screenBg = if (themeMode == com.techressive.hex.state.ThemeMode.LIGHT) Color(0xFFF6F8FC) else activeSkin.bgOled
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(activeSkin.bgOled)
+            .background(screenBg)
     ) {
         // Top Bar with Universal Top-Left Back Button
         Row(
@@ -198,33 +208,80 @@ fun LibraryScreen(
             }
         }
 
-        // Section Tabs
-        ScrollableTabRow(
-            selectedTabIndex = selectedTabIndex,
-            containerColor = activeSkin.bgOled,
-            contentColor = HexColors.PureWhite,
-            indicator = { tabPositions ->
-                TabRowDefaults.Indicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
-                    color = primaryAccent,
-                    height = 2.dp
-                )
-            },
-            edgePadding = 16.dp
+        // Section Tabs & Sort Bar
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            tabs.forEachIndexed { index, tab ->
-                Tab(
-                    selected = selectedTabIndex == index,
-                    onClick = { selectedTabIndex = index },
-                    text = {
-                        Text(
-                            text = tab.label,
-                            color = if (selectedTabIndex == index) primaryAccent else HexColors.SlateGray,
-                            fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 13.sp
+            ScrollableTabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = activeSkin.bgOled,
+                contentColor = HexColors.PureWhite,
+                indicator = { tabPositions ->
+                    TabRowDefaults.Indicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                        color = primaryAccent,
+                        height = 2.dp
+                    )
+                },
+                edgePadding = 16.dp,
+                modifier = Modifier.weight(1f)
+            ) {
+                tabs.forEachIndexed { index, tab ->
+                    Tab(
+                        selected = selectedTabIndex == index,
+                        onClick = { appState.setSelectedLibraryTabIndex(index) },
+                        text = {
+                            Text(
+                                text = tab.label,
+                                color = if (selectedTabIndex == index) primaryAccent else HexColors.SlateGray,
+                                fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 13.sp
+                            )
+                        }
+                    )
+                }
+            }
+
+            // Sort button for songs/library
+            Box(modifier = Modifier.padding(end = 12.dp)) {
+                IconButton(
+                    onClick = { showSortMenu = true },
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(activeSkin.surfaceColor)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = "Sort",
+                        tint = HexColors.Lavender,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                androidx.compose.material3.DropdownMenu(
+                    expanded = showSortMenu,
+                    onDismissRequest = { showSortMenu = false },
+                    modifier = Modifier.background(activeSkin.surfaceColor)
+                ) {
+                    com.techressive.hex.state.TrackSortOrder.values().forEach { order ->
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = order.displayName,
+                                    color = if (order == trackSortOrder) primaryAccent else HexColors.PureWhite,
+                                    fontWeight = if (order == trackSortOrder) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 12.sp
+                                )
+                            },
+                            onClick = {
+                                appState.setTrackSortOrder(order)
+                                showSortMenu = false
+                            }
                         )
                     }
-                )
+                }
             }
         }
 
@@ -233,7 +290,7 @@ fun LibraryScreen(
         // Content by selected tab
         when (tabs[selectedTabIndex]) {
             LibraryTab.ALL_TRACKS -> TrackListView(
-                tracks = tracks,
+                tracks = sortedTracks,
                 currentTrack = currentTrack,
                 favorites = favorites,
                 onPlay = { appState.playTrack(it) },
@@ -242,7 +299,7 @@ fun LibraryScreen(
                 onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
             )
             LibraryTab.FAVORITES -> {
-                val favTracks = tracks.filter { favorites.contains(it.id) }
+                val favTracks = sortedTracks.filter { favorites.contains(it.id) }
                 TrackListView(
                     tracks = favTracks,
                     currentTrack = currentTrack,

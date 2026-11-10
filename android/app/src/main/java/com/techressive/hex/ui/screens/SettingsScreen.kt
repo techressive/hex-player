@@ -53,13 +53,16 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val activeSkin by appState.activeSkin.collectAsState()
+    val themeMode by appState.themeMode.collectAsState()
     val tracks by appState.tracks.collectAsState()
     val scrollState = rememberScrollState()
+
+    val screenBg = if (themeMode == com.techressive.hex.state.ThemeMode.LIGHT) Color(0xFFF6F8FC) else activeSkin.bgOled
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(activeSkin.bgOled)
+            .background(screenBg)
     ) {
         Column(
             modifier = Modifier

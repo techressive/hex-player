@@ -38,6 +38,15 @@ sealed class Screen {
     object Settings : Screen()
 }
 
+enum class TrackSortOrder(val displayName: String) {
+    TITLE_ASC("Title (A-Z)"),
+    TITLE_DESC("Title (Z-A)"),
+    ARTIST_ASC("Artist (A-Z)"),
+    ALBUM_ASC("Album (A-Z)"),
+    DURATION_DESC("Duration (Longest)"),
+    YEAR_DESC("Year (Newest)")
+}
+
 enum class ThemeMode(val displayName: String) {
     DARK("Dark (OLED)"),
     LIGHT("Light")
@@ -85,6 +94,14 @@ class AppState(
     // Library State
     private val _tracks = MutableStateFlow<List<Track>>(emptyList())
     val tracks: StateFlow<List<Track>> = _tracks.asStateFlow()
+
+    // Track Sorting
+    private val _trackSortOrder = MutableStateFlow(TrackSortOrder.TITLE_ASC)
+    val trackSortOrder: StateFlow<TrackSortOrder> = _trackSortOrder.asStateFlow()
+
+    // Library Tab Memory
+    private val _selectedLibraryTabIndex = MutableStateFlow(0)
+    val selectedLibraryTabIndex: StateFlow<Int> = _selectedLibraryTabIndex.asStateFlow()
 
     private val _currentTrack = MutableStateFlow<Track?>(null)
     val currentTrack: StateFlow<Track?> = _currentTrack.asStateFlow()
@@ -155,6 +172,37 @@ class AppState(
             if (_currentScreen.value !is Screen.Home) {
                 _currentScreen.value = Screen.Home
                 _canGoBack.value = false
+            }
+        }
+    }
+
+    fun setTrackSortOrder(order: TrackSortOrder) {
+        _trackSortOrder.value = order
+        prefs.edit().putString("track_sort_order", order.name).apply()
+    }
+
+    fun setSelectedLibraryTabIndex(index: Int) {
+        _selectedLibraryTabIndex.value = index
+    }
+
+    fun getSortedTracks(sourceTracks: List<Track> = _tracks.value): List<Track> {
+        return when (_trackSortOrder.value) {
+            TrackSortOrder.TITLE_ASC -> sourceTracks.sortedBy { it.title.lowercase() }
+            TrackSortOrder.TITLE_DESC -> sourceTracks.sortedByDescending { it.title.lowercase() }
+            TrackSortOrder.ARTIST_ASC -> sourceTracks.sortedBy { it.artist.lowercase() }
+            TrackSortOrder.ALBUM_ASC -> sourceTracks.sortedBy { it.album.lowercase() }
+            TrackSortOrder.DURATION_DESC -> sourceTracks.sortedByDescending { it.durationMs }
+            TrackSortOrder.YEAR_DESC -> sourceTracks.sortedByDescending { it.year ?: 0 }
+        }
+    }
+
+    fun autoFetchAllArtistDetails() {
+        scope.launch(Dispatchers.IO) {
+            val artists = getSeparatedArtists().keys
+            for (artist in artists) {
+                if (artist.isNotBlank() && !artist.equals("Unknown Artist", ignoreCase = true)) {
+                    ArtistBioService.fetchArtistDetails(context, artist)
+                }
             }
         }
     }
@@ -399,6 +447,7 @@ class AppState(
             withContext(Dispatchers.Main) {
                 saveCachedLibrary()
                 _isScanning.value = false
+                autoFetchAllArtistDetails()
             }
         }
     }

@@ -92,27 +92,27 @@ class MainActivity : ComponentActivity() {
                                 targetState = currentScreen,
                                 transitionSpec = {
                                     if (targetState is Screen.NowPlaying || targetState is Screen.FullScreenLyrics) {
-                                        // Smooth vertical slide up popup animation!
+                                        // Smooth vertical slide up popup animation from bottom
                                         (androidx.compose.animation.slideInVertically(
-                                            animationSpec = tween(320),
-                                            initialOffsetY = { height -> height / 2 }
-                                        ) + fadeIn(animationSpec = tween(320)))
+                                            animationSpec = tween(340),
+                                            initialOffsetY = { height -> height }
+                                        ) + fadeIn(animationSpec = tween(340)))
                                             .togetherWith(
                                                 androidx.compose.animation.slideOutVertically(
                                                     animationSpec = tween(280),
-                                                    targetOffsetY = { height -> height / 3 }
+                                                    targetOffsetY = { height -> height }
                                                 ) + fadeOut(animationSpec = tween(280))
                                             )
                                     } else {
-                                        // Fluid horizontal slide
-                                        (slideInHorizontally(
-                                            animationSpec = tween(260),
-                                            initialOffsetX = { width -> width / 4 }
+                                        // Smooth shrink/scale fade transition when navigating back or switching screens
+                                        (androidx.compose.animation.scaleIn(
+                                            initialScale = 0.93f,
+                                            animationSpec = tween(260)
                                         ) + fadeIn(animationSpec = tween(260)))
                                             .togetherWith(
-                                                slideOutHorizontally(
-                                                    animationSpec = tween(240),
-                                                    targetOffsetX = { width -> -width / 4 }
+                                                androidx.compose.animation.scaleOut(
+                                                    targetScale = 0.93f,
+                                                    animationSpec = tween(240)
                                                 ) + fadeOut(animationSpec = tween(240))
                                             )
                                     }

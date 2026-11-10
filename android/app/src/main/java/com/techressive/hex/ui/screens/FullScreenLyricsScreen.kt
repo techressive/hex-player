@@ -2,12 +2,14 @@ package com.techressive.hex.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
@@ -33,11 +36,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.techressive.hex.metadata.ArtistBioService
 import com.techressive.hex.state.AppState
+import com.techressive.hex.ui.components.AlbumCoverView
 import com.techressive.hex.ui.theme.HexColors
 
 @Composable
@@ -52,7 +63,12 @@ fun FullScreenLyricsScreen(
     val secondaryAccent by appState.accentColorSecondary.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
 
+    val context = LocalContext.current
     val listState = rememberLazyListState()
+
+    val artistPhoto = remember(currentTrack) {
+        currentTrack?.let { ArtistBioService.getCachedArtistPhoto(it.artist) }
+    }
 
     val activeIndex = remember(lyrics, currentPosition) {
         val idx = lyrics.indexOfLast { it.timestamp <= currentPosition }
@@ -67,25 +83,52 @@ fun FullScreenLyricsScreen(
         }
     }
 
-    val bgBrush = Brush.verticalGradient(
-        colors = listOf(
-            primaryAccent.copy(alpha = 0.35f),
-            activeSkin.bgOled.copy(alpha = 0.9f),
-            activeSkin.bgOled
-        )
-    )
-
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(bgBrush)
+            .background(HexColors.PureBlack)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures { _, dragAmount ->
+                    if (dragAmount > 38f) {
+                        appState.goBack()
+                    }
+                }
+            }
     ) {
+        // 1. Background Artist Photo with dark immersive overlay for legibility
+        if (!artistPhoto.isNullOrBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(artistPhoto)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // Heavy dark gradient overlay ensuring all text is crystal clear
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Black.copy(alpha = 0.88f),
+                            Color.Black.copy(alpha = 0.94f),
+                            Color.Black.copy(alpha = 0.98f)
+                        )
+                    )
+                )
+        )
+
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header: Track title, artist, and close button
+            // Header bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                    .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -95,7 +138,8 @@ fun FullScreenLyricsScreen(
                         color = HexColors.PureWhite,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = currentTrack?.artist ?: "",
@@ -111,7 +155,7 @@ fun FullScreenLyricsScreen(
                     modifier = Modifier
                         .size(36.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.1f))
+                        .background(Color.White.copy(alpha = 0.12f))
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
@@ -122,50 +166,74 @@ fun FullScreenLyricsScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            // Top 1/3: Prominent High-Resolution Album Artwork
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(0.33f)
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                AlbumCoverView(
+                    track = currentTrack,
+                    modifier = Modifier.fillMaxHeight(),
+                    cornerRadius = 16.dp,
+                    showFetchButton = false
+                )
+            }
 
-            if (lyrics.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No synchronized lyrics available for this track.",
-                        color = HexColors.SlateGray,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 40.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    itemsIndexed(lyrics, key = { _, line -> line.id }) { index, line ->
-                        val isCurrent = index == activeIndex
-                        val isPast = index < activeIndex
-
+            // Bottom 2/3: Dedicated Synced Lyrics View with tap-to-seek
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(0.67f)
+            ) {
+                if (lyrics.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Text(
-                            text = line.text,
-                            color = when {
-                                isCurrent -> HexColors.PureWhite
-                                isPast -> HexColors.SlateGray.copy(alpha = 0.6f)
-                                else -> HexColors.SlateGray.copy(alpha = 0.35f)
-                            },
-                            fontSize = if (isCurrent) 22.sp else 16.sp,
-                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
-                            lineHeight = if (isCurrent) 30.sp else 24.sp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    appState.audioPlayer.seekTo(line.timestamp)
-                                }
-                                .padding(vertical = 4.dp)
+                            text = "No synchronized lyrics found for this track.\nCompatible with embedded tags and companion .lrc files.",
+                            color = HexColors.SlateGray,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 20.sp
                         )
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        itemsIndexed(lyrics, key = { _, line -> line.id }) { index, line ->
+                            val isCurrent = index == activeIndex
+                            val isPast = index < activeIndex
+
+                            Text(
+                                text = line.text,
+                                color = when {
+                                    isCurrent -> HexColors.PureWhite
+                                    isPast -> HexColors.SlateGray.copy(alpha = 0.65f)
+                                    else -> HexColors.SlateGray.copy(alpha = 0.35f)
+                                },
+                                fontSize = if (isCurrent) 22.sp else 16.sp,
+                                fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
+                                lineHeight = if (isCurrent) 32.sp else 24.sp,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isCurrent) primaryAccent.copy(alpha = 0.15f) else Color.Transparent)
+                                    .clickable {
+                                        appState.audioPlayer.seekTo(line.timestamp)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
