@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="hex_cobalt_blue">#5B7CFA</color>
+    <color name="hex_lavender">#A99BFF</color>
+    <color name="hex_slate_gray">#A6A9B0</color>
+    <color name="hex_oled_black">#050505</color>
+    <color name="hex_black">#000000</color>
+</resources>

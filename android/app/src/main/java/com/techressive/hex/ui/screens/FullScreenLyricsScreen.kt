@@ -1,0 +1,174 @@
+package com.techressive.hex.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.techressive.hex.state.AppState
+import com.techressive.hex.ui.theme.HexColors
+
+@Composable
+fun FullScreenLyricsScreen(
+    appState: AppState,
+    modifier: Modifier = Modifier
+) {
+    val currentTrack by appState.currentTrack.collectAsState()
+    val currentPosition by appState.audioPlayer.currentPosition.collectAsState()
+    val lyrics by appState.lyrics.collectAsState()
+    val primaryAccent by appState.accentColorPrimary.collectAsState()
+    val secondaryAccent by appState.accentColorSecondary.collectAsState()
+    val activeSkin by appState.activeSkin.collectAsState()
+
+    val listState = rememberLazyListState()
+
+    val activeIndex = remember(lyrics, currentPosition) {
+        val idx = lyrics.indexOfLast { it.timestamp <= currentPosition }
+        if (idx >= 0) idx else 0
+    }
+
+    // Auto-scroll with animation to current line
+    LaunchedEffect(activeIndex) {
+        if (lyrics.isNotEmpty() && activeIndex in lyrics.indices) {
+            val target = (activeIndex - 2).coerceAtLeast(0)
+            listState.animateScrollToItem(target)
+        }
+    }
+
+    val bgBrush = Brush.verticalGradient(
+        colors = listOf(
+            primaryAccent.copy(alpha = 0.35f),
+            activeSkin.bgOled.copy(alpha = 0.9f),
+            activeSkin.bgOled
+        )
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(bgBrush)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Header: Track title, artist, and close button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = currentTrack?.title ?: "Now Playing",
+                        color = HexColors.PureWhite,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = currentTrack?.artist ?: "",
+                        color = secondaryAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+
+                IconButton(
+                    onClick = { appState.goBack() },
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.1f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = HexColors.PureWhite,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            if (lyrics.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No synchronized lyrics available for this track.",
+                        color = HexColors.SlateGray,
+                        fontSize = 14.sp,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 40.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    itemsIndexed(lyrics, key = { _, line -> line.id }) { index, line ->
+                        val isCurrent = index == activeIndex
+                        val isPast = index < activeIndex
+
+                        Text(
+                            text = line.text,
+                            color = when {
+                                isCurrent -> HexColors.PureWhite
+                                isPast -> HexColors.SlateGray.copy(alpha = 0.6f)
+                                else -> HexColors.SlateGray.copy(alpha = 0.35f)
+                            },
+                            fontSize = if (isCurrent) 22.sp else 16.sp,
+                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.Medium,
+                            lineHeight = if (isCurrent) 30.sp else 24.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    appState.audioPlayer.seekTo(line.timestamp)
+                                }
+                                .padding(vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,3 @@
+import AuralisKit
+
+AuralisApp.main()
