@@ -61,10 +61,11 @@ import com.techressive.hex.ui.theme.HexColors
 
 enum class LibraryTab(val label: String) {
     ALL_TRACKS("All Tracks"),
-    FAVORITES("Favorites"),
-    RECENT("Recent"),
     ARTISTS("Artists"),
-    ALBUMS("Albums")
+    ALBUMS("Albums"),
+    RECENT("Recently Added"),
+    FAVORITES("Favorites"),
+    PLAYLISTS("Playlists")
 }
 
 @Composable
@@ -141,8 +142,7 @@ fun LibraryScreen(
                 )
             }
 
-            // Only show prominent "Add Folder" button if library is empty.
-            // If library already has tracks, show a clean subtle icon button to import more.
+            // Completely hide Add Folder button/icon once tracks have been added
             if (tracks.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -169,21 +169,6 @@ fun LibraryScreen(
                         )
                     }
                 }
-            } else {
-                IconButton(
-                    onClick = { dirPickerLauncher.launch(null) },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(activeSkin.surfaceColor)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CreateNewFolder,
-                        contentDescription = "Import Folder",
-                        tint = HexColors.Lavender,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
             }
         }
 
@@ -208,18 +193,38 @@ fun LibraryScreen(
             }
         }
 
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+            initialPage = selectedTabIndex.coerceIn(0, tabs.size - 1),
+            pageCount = { tabs.size }
+        )
+        val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
+        // Sync pager when selectedTabIndex changes
+        androidx.compose.runtime.LaunchedEffect(selectedTabIndex) {
+            if (pagerState.currentPage != selectedTabIndex) {
+                pagerState.animateScrollToPage(selectedTabIndex)
+            }
+        }
+
+        // Sync tab index when user swipes left/right on pager
+        androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) {
+            if (selectedTabIndex != pagerState.currentPage) {
+                appState.setSelectedLibraryTabIndex(pagerState.currentPage)
+            }
+        }
+
         // Section Tabs & Sort Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ScrollableTabRow(
-                selectedTabIndex = selectedTabIndex,
+                selectedTabIndex = pagerState.currentPage,
                 containerColor = activeSkin.bgOled,
                 contentColor = HexColors.PureWhite,
                 indicator = { tabPositions ->
                     TabRowDefaults.Indicator(
-                        modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTabIndex]),
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
                         color = primaryAccent,
                         height = 2.dp
                     )
@@ -229,13 +234,18 @@ fun LibraryScreen(
             ) {
                 tabs.forEachIndexed { index, tab ->
                     Tab(
-                        selected = selectedTabIndex == index,
-                        onClick = { appState.setSelectedLibraryTabIndex(index) },
+                        selected = pagerState.currentPage == index,
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(index)
+                            }
+                            appState.setSelectedLibraryTabIndex(index)
+                        },
                         text = {
                             Text(
                                 text = tab.label,
-                                color = if (selectedTabIndex == index) primaryAccent else HexColors.SlateGray,
-                                fontWeight = if (selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal,
+                                color = if (pagerState.currentPage == index) primaryAccent else HexColors.SlateGray,
+                                fontWeight = if (pagerState.currentPage == index) FontWeight.Bold else FontWeight.Normal,
                                 fontSize = 13.sp
                             )
                         }
@@ -287,147 +297,166 @@ fun LibraryScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Content by selected tab
-        when (tabs[selectedTabIndex]) {
-            LibraryTab.ALL_TRACKS -> TrackListView(
-                tracks = sortedTracks,
-                currentTrack = currentTrack,
-                favorites = favorites,
-                onPlay = { appState.playTrack(it) },
-                onToggleFavorite = { appState.toggleFavorite(it) },
-                onFetchArtwork = { appState.fetchArtworkForTrack(it) },
-                onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
-            )
-            LibraryTab.FAVORITES -> {
-                val favTracks = sortedTracks.filter { favorites.contains(it.id) }
-                TrackListView(
-                    tracks = favTracks,
+        // Swipeable Content with HorizontalPager
+        androidx.compose.foundation.pager.HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            when (tabs[page]) {
+                LibraryTab.ALL_TRACKS -> TrackListView(
+                    tracks = sortedTracks,
                     currentTrack = currentTrack,
                     favorites = favorites,
-                    emptyMessage = "No favorite songs yet. Tap the heart icon on any song.",
                     onPlay = { appState.playTrack(it) },
                     onToggleFavorite = { appState.toggleFavorite(it) },
                     onFetchArtwork = { appState.fetchArtworkForTrack(it) },
                     onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
                 )
-            }
-            LibraryTab.RECENT -> {
-                TrackListView(
-                    tracks = recentTracks,
-                    currentTrack = currentTrack,
-                    favorites = favorites,
-                    emptyMessage = "No recently played tracks.",
-                    onPlay = { appState.playTrack(it) },
-                    onToggleFavorite = { appState.toggleFavorite(it) },
-                    onFetchArtwork = { appState.fetchArtworkForTrack(it) },
-                    onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
-                )
-            }
-            LibraryTab.ARTISTS -> {
-                val artistGroups = remember(tracks, isArtistSeparationEnabled, artistSeparators) {
-                    appState.getSeparatedArtists()
-                }
-                if (artistGroups.isEmpty()) {
-                    EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(artistGroups.keys.toList().sorted()) { artist ->
-                            val artistPhoto = com.techressive.hex.metadata.ArtistBioService.getCachedArtistPhoto(artist)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { appState.navigateTo(Screen.ArtistBio(artist)) }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
+                LibraryTab.ARTISTS -> {
+                    val artistGroups = remember(tracks, isArtistSeparationEnabled, artistSeparators) {
+                        appState.getSeparatedArtists()
+                    }
+                    if (artistGroups.isEmpty()) {
+                        EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(artistGroups.keys.toList().sorted()) { artist ->
+                                val artistPhoto = com.techressive.hex.metadata.ArtistBioService.getCachedArtistPhoto(artist)
+                                Row(
                                     modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(CircleShape)
-                                        .background(activeSkin.surfaceColor),
-                                    contentAlignment = Alignment.Center
+                                        .fillMaxWidth()
+                                        .clickable { appState.navigateTo(Screen.ArtistBio(artist)) }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (!artistPhoto.isNullOrBlank()) {
-                                        coil.compose.AsyncImage(
-                                            model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
-                                                .data(artistPhoto)
-                                                .crossfade(true)
-                                                .build(),
-                                            contentDescription = artist,
-                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(CircleShape)
+                                            .background(activeSkin.surfaceColor),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (!artistPhoto.isNullOrBlank()) {
+                                            coil.compose.AsyncImage(
+                                                model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                                                    .data(artistPhoto)
+                                                    .crossfade(true)
+                                                    .build(),
+                                                contentDescription = artist,
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Person,
+                                                contentDescription = artist,
+                                                tint = HexColors.CobaltBlue,
+                                                modifier = Modifier.size(24.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column {
+                                        Text(
+                                            text = artist,
+                                            color = HexColors.PureWhite,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
                                         )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.Person,
-                                            contentDescription = artist,
-                                            tint = HexColors.CobaltBlue,
-                                            modifier = Modifier.size(24.dp)
+                                        Text(
+                                            text = "${artistGroups[artist]?.size ?: 0} tracks",
+                                            color = HexColors.SlateGray,
+                                            fontSize = 12.sp
                                         )
                                     }
-                                }
-                                Spacer(modifier = Modifier.width(14.dp))
-                                Column {
-                                    Text(
-                                        text = artist,
-                                        color = HexColors.PureWhite,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                    Text(
-                                        text = "${artistGroups[artist]?.size ?: 0} tracks",
-                                        color = HexColors.SlateGray,
-                                        fontSize = 12.sp
-                                    )
                                 }
                             }
                         }
                     }
                 }
-            }
-            LibraryTab.ALBUMS -> {
-                val albumGroups = tracks.groupBy { it.album }
-                if (albumGroups.isEmpty()) {
-                    EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(albumGroups.keys.toList().sorted()) { album ->
-                            val albumTracks = albumGroups[album] ?: emptyList()
-                            val firstTrack = albumTracks.firstOrNull()
-                            val artist = firstTrack?.artist ?: "Unknown Artist"
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        appState.navigateTo(Screen.AlbumDetail(albumName = album, artist = artist))
+                LibraryTab.ALBUMS -> {
+                    val albumGroups = tracks.groupBy { it.album }
+                    if (albumGroups.isEmpty()) {
+                        EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(albumGroups.keys.toList().sorted()) { album ->
+                                val albumTracks = albumGroups[album] ?: emptyList()
+                                val firstTrack = albumTracks.firstOrNull()
+                                val artist = firstTrack?.artist ?: "Unknown Artist"
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            appState.navigateTo(Screen.AlbumDetail(albumName = album, artist = artist))
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AlbumCoverView(
+                                        track = firstTrack,
+                                        modifier = Modifier.size(52.dp),
+                                        cornerRadius = 10.dp,
+                                        showFetchButton = false
+                                    )
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = album,
+                                            color = HexColors.PureWhite,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "$artist • ${albumTracks.size} tracks",
+                                            color = HexColors.SlateGray,
+                                            fontSize = 12.sp
+                                        )
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                AlbumCoverView(
-                                    track = firstTrack,
-                                    modifier = Modifier.size(52.dp),
-                                    cornerRadius = 10.dp,
-                                    showFetchButton = false
-                                )
-                                Spacer(modifier = Modifier.width(14.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = album,
-                                        color = HexColors.PureWhite,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "$artist • ${albumTracks.size} tracks",
-                                        color = HexColors.SlateGray,
-                                        fontSize = 12.sp
-                                    )
                                 }
                             }
                         }
+                    }
+                }
+                LibraryTab.RECENT -> {
+                    TrackListView(
+                        tracks = recentTracks,
+                        currentTrack = currentTrack,
+                        favorites = favorites,
+                        emptyMessage = "No recently played tracks.",
+                        onPlay = { appState.playTrack(it) },
+                        onToggleFavorite = { appState.toggleFavorite(it) },
+                        onFetchArtwork = { appState.fetchArtworkForTrack(it) },
+                        onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
+                    )
+                }
+                LibraryTab.FAVORITES -> {
+                    val favTracks = sortedTracks.filter { favorites.contains(it.id) }
+                    TrackListView(
+                        tracks = favTracks,
+                        currentTrack = currentTrack,
+                        favorites = favorites,
+                        emptyMessage = "No favorite songs yet. Tap the heart icon on any song.",
+                        onPlay = { appState.playTrack(it) },
+                        onToggleFavorite = { appState.toggleFavorite(it) },
+                        onFetchArtwork = { appState.fetchArtworkForTrack(it) },
+                        onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
+                    )
+                }
+                LibraryTab.PLAYLISTS -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Playlists will appear here.",
+                            color = HexColors.SlateGray,
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
