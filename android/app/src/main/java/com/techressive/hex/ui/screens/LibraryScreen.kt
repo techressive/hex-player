@@ -317,7 +317,20 @@ fun LibraryScreen(
                         appState.getSeparatedArtists()
                     }
                     if (artistGroups.isEmpty()) {
-                        EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                        if (tracks.isEmpty()) {
+                            EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize().padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No artists found in library.",
+                                    color = HexColors.SlateGray,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             items(artistGroups.keys.toList().sorted()) { artist ->
@@ -377,7 +390,20 @@ fun LibraryScreen(
                 LibraryTab.ALBUMS -> {
                     val albumGroups = tracks.groupBy { it.album }
                     if (albumGroups.isEmpty()) {
-                        EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                        if (tracks.isEmpty()) {
+                            EmptyLibraryPlaceholder { dirPickerLauncher.launch(null) }
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize().padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No albums found in library.",
+                                    color = HexColors.SlateGray,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
                             items(albumGroups.keys.toList().sorted()) { album ->

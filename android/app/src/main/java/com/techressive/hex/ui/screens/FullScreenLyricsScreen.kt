@@ -34,8 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -44,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.techressive.hex.metadata.ArtistBioService
@@ -83,10 +89,35 @@ fun FullScreenLyricsScreen(
         }
     }
 
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y > 40f && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
+                    appState.goBack()
+                    return available
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (available.y > 30f) {
+                    appState.goBack()
+                    return available
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(HexColors.PureBlack)
+            .nestedScroll(nestedScrollConnection)
             .pointerInput(Unit) {
                 detectVerticalDragGestures { _, dragAmount ->
                     if (dragAmount > 38f) {
@@ -124,69 +155,89 @@ fun FullScreenLyricsScreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header bar
-            Row(
+            // Top 1/3: Header Bar + Prominent Album Artwork with solid backdrop & zIndex(10f)
+            // Any lyrics scrolling up cleanly pass BEHIND this elevated top section!
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .weight(0.36f)
+                    .zIndex(10f)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Black,
+                                Color.Black.copy(alpha = 0.98f),
+                                Color.Black.copy(alpha = 0.92f)
+                            )
+                        )
+                    )
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = currentTrack?.title ?: "Now Playing",
-                        color = HexColors.PureWhite,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = currentTrack?.artist ?: "",
-                        color = secondaryAccent,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
-                }
-
-                IconButton(
-                    onClick = { appState.goBack() },
+                // Header bar
+                Row(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.12f))
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close",
-                        tint = HexColors.PureWhite,
-                        modifier = Modifier.size(20.dp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = currentTrack?.title ?: "Now Playing",
+                            color = HexColors.PureWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = currentTrack?.artist ?: "",
+                            color = secondaryAccent,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { appState.goBack() },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.12f))
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = HexColors.PureWhite,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // High-Resolution Album Artwork
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AlbumCoverView(
+                        track = currentTrack,
+                        modifier = Modifier.fillMaxHeight(),
+                        cornerRadius = 16.dp,
+                        showFetchButton = false
                     )
                 }
-            }
-
-            // Top 1/3: Prominent High-Resolution Album Artwork
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(0.33f)
-                    .padding(horizontal = 24.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                AlbumCoverView(
-                    track = currentTrack,
-                    modifier = Modifier.fillMaxHeight(),
-                    cornerRadius = 16.dp,
-                    showFetchButton = false
-                )
             }
 
             // Bottom 2/3: Dedicated Synced Lyrics View with tap-to-seek
+            // Clipped to its bounds so lyrics slide completely behind the artwork
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(0.67f)
+                    .weight(0.64f)
+                    .clipToBounds()
             ) {
                 if (lyrics.isEmpty()) {
                     Box(

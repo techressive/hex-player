@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,7 +25,9 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -43,12 +46,17 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +93,31 @@ fun NowPlayingScreen(
 
     val scrollState = rememberScrollState()
     val themeMode by appState.themeMode.collectAsState()
+    val outputMethod by appState.audioPlayer.outputMethod.collectAsState()
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y > 40f && scrollState.value == 0) {
+                    appState.goBack()
+                    return available
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (available.y > 30f) {
+                    appState.goBack()
+                    return available
+                }
+                return Offset.Zero
+            }
+        }
+    }
 
     // Dynamic gradient background derived from cover art, active skin, and themeMode
     val bgBrush = if (themeMode == com.techressive.hex.state.ThemeMode.LIGHT) {
@@ -109,6 +142,7 @@ fun NowPlayingScreen(
         modifier = modifier
             .fillMaxSize()
             .background(bgBrush)
+            .nestedScroll(nestedScrollConnection)
             .pointerInput(Unit) {
                 detectVerticalDragGestures { _, dragAmount ->
                     // Swipe down gesture to go back!
@@ -201,13 +235,14 @@ fun NowPlayingScreen(
             // Centerpiece Album Artwork
             AlbumCoverView(
                 track = currentTrack,
-                cornerRadius = 20.dp,
+                cornerRadius = 22.dp,
                 showFetchButton = true,
                 onFetchArtwork = {
                     currentTrack?.let { appState.fetchArtworkForTrack(it) }
                 },
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
+                    .fillMaxWidth(0.88f)
+                    .aspectRatio(1f)
             )
 
             Spacer(modifier = Modifier.height(18.dp))
@@ -225,19 +260,51 @@ fun NowPlayingScreen(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Artist link - navigates directly to Biography screen!
-            Text(
-                text = currentTrack?.artist ?: "Select music in Library",
-                color = secondaryAccent,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.clickable {
-                    currentTrack?.artist?.let {
-                        appState.navigateTo(Screen.ArtistBio(it))
+            // Multi-Artist individual navigation links
+            val artists = remember(currentTrack?.artist) {
+                currentTrack?.artist?.let { appState.splitArtists(it) } ?: emptyList()
+            }
+
+            if (artists.isEmpty()) {
+                Text(
+                    text = "Select music in Library",
+                    color = secondaryAccent,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    artists.forEachIndexed { index, singleArtist ->
+                        Text(
+                            text = singleArtist,
+                            color = secondaryAccent,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable {
+                                    appState.navigateTo(Screen.ArtistBio(singleArtist))
+                                }
+                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                        )
+                        if (index < artists.size - 1) {
+                            Text(
+                                text = " • ",
+                                color = HexColors.SlateGray,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
-            )
+            }
 
             Spacer(modifier = Modifier.height(4.dp))
 
@@ -292,21 +359,19 @@ fun NowPlayingScreen(
                         onSeekTo = { appState.audioPlayer.seekTo(it) },
                         accentColor = secondaryAccent
                     )
-                    // Full Screen lyrics icon button
+                    // Minimal Full Screen lyrics icon button (smaller, borderless, without circle)
                     IconButton(
                         onClick = { appState.navigateTo(Screen.FullScreenLyrics) },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(HexColors.PureBlack.copy(alpha = 0.4f))
+                            .padding(4.dp)
+                            .size(22.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Equalizer,
+                            imageVector = Icons.Default.OpenInFull,
                             contentDescription = "Full Lyrics",
-                            tint = secondaryAccent,
-                            modifier = Modifier.size(16.dp)
+                            tint = secondaryAccent.copy(alpha = 0.85f),
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -341,11 +406,10 @@ fun NowPlayingScreen(
                     )
                 }
 
-                // Centered Play/Pause Button
+                // Centered Play/Pause Button (clean gradient without outer shadow)
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .shadow(16.dp, CircleShape, ambientColor = primaryAccent, spotColor = secondaryAccent)
                         .clip(CircleShape)
                         .background(
                             Brush.linearGradient(listOf(primaryAccent, secondaryAccent))
@@ -434,7 +498,34 @@ fun NowPlayingScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Audiophile DSP Engine & Format Status Bar (utilizing bottom space ergonomically)
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(activeSkin.surfaceColor.copy(alpha = 0.5f))
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.GraphicEq,
+                    contentDescription = null,
+                    tint = primaryAccent,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${outputMethod.displayName.split(" ")[0]} Engine • 32-bit Float • Bit-Perfect Output",
+                    color = HexColors.SlateGray,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.4.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
         }
     }
 }

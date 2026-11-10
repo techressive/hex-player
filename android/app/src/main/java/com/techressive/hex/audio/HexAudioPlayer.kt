@@ -109,9 +109,25 @@ class HexAudioPlayer(
 
     private var currentTrack: Track? = null
     private var progressJob: Job? = null
+    private var eqEngine: ParametricEQEngine? = null
 
     init {
         initPlayer()
+    }
+
+    fun attachEqEngine(engine: ParametricEQEngine) {
+        this.eqEngine = engine
+        bindEqSession()
+    }
+
+    private fun bindEqSession() {
+        val player = exoPlayer ?: return
+        val sessionId = player.audioSessionId
+        if (sessionId > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
+            eqEngine?.attachAudioSession(sessionId)
+        } else {
+            eqEngine?.attachAudioSession(0)
+        }
     }
 
     fun setAudioOutputConfig(
@@ -205,6 +221,7 @@ class HexAudioPlayer(
 
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             if (playbackState == Player.STATE_READY) {
+                                bindEqSession()
                                 val durMs = exoPlayer?.duration ?: 0L
                                 if (durMs > 0) {
                                     _duration.value = durMs / 1000.0
@@ -223,9 +240,11 @@ class HexAudioPlayer(
                         }
                     })
                 }
+            bindEqSession()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize custom audio sink, falling back to standard ExoPlayer", e)
             exoPlayer = ExoPlayer.Builder(context).build()
+            bindEqSession()
         }
     }
 

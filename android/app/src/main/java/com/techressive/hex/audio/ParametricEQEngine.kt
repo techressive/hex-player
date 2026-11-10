@@ -2,11 +2,16 @@ package com.techressive.hex.audio
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.audiofx.Equalizer
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
+import kotlin.math.log10
+import kotlin.math.roundToInt
 
 enum class EQMode {
     SIMPLE,
@@ -59,6 +64,9 @@ class ParametricEQEngine(context: Context) {
     private val _presets = MutableStateFlow<List<EQPreset>>(emptyList())
     val presets: StateFlow<List<EQPreset>> = _presets.asStateFlow()
 
+    private var hardwareEqualizer: Equalizer? = null
+    private var currentSessionId: Int = -1
+
     init {
         setupDefaultBands()
         loadUserPresets()
@@ -66,8 +74,68 @@ class ParametricEQEngine(context: Context) {
         syncActiveBands()
     }
 
+    fun attachAudioSession(sessionId: Int) {
+        if (hardwareEqualizer != null && currentSessionId == sessionId) {
+            applyCurrentGainsToHardware()
+            return
+        }
+        releaseHardwareEqualizer()
+        currentSessionId = sessionId
+        try {
+            hardwareEqualizer = Equalizer(0, sessionId).apply {
+                enabled = _isEnabled.value
+            }
+            applyCurrentGainsToHardware()
+            Log.d("ParametricEQEngine", "Successfully attached Equalizer to session: $sessionId, bands: ${hardwareEqualizer?.numberOfBands}")
+        } catch (e: Exception) {
+            Log.w("ParametricEQEngine", "Failed to attach Equalizer to session $sessionId: ${e.message}, falling back to session 0")
+            try {
+                hardwareEqualizer = Equalizer(0, 0).apply {
+                    enabled = _isEnabled.value
+                }
+                applyCurrentGainsToHardware()
+            } catch (e2: Exception) {
+                Log.e("ParametricEQEngine", "Failed to init Equalizer on session 0", e2)
+            }
+        }
+    }
+
+    fun releaseHardwareEqualizer() {
+        try {
+            hardwareEqualizer?.release()
+        } catch (_: Exception) {}
+        hardwareEqualizer = null
+    }
+
+    fun applyCurrentGainsToHardware() {
+        val eq = hardwareEqualizer ?: return
+        try {
+            eq.enabled = _isEnabled.value
+            if (!_isEnabled.value) return
+
+            val range = eq.bandLevelRange
+            val minLevel = range[0].toInt()
+            val maxLevel = range[1].toInt()
+            val numBands = eq.numberOfBands.toInt()
+            val activeBands = _bands.value
+
+            for (i in 0 until numBands) {
+                val centerHz = eq.getCenterFreq(i.toShort()) / 1000.0
+                val closest = activeBands.minByOrNull { band ->
+                    abs(log10(band.frequency.coerceAtLeast(10.0)) - log10(centerHz.coerceAtLeast(10.0)))
+                }
+                val gainDb = closest?.gainDb ?: 0.0
+                val mB = (gainDb * 100.0).roundToInt().coerceIn(minLevel, maxLevel).toShort()
+                eq.setBandLevel(i.toShort(), mB)
+            }
+        } catch (e: Exception) {
+            Log.e("ParametricEQEngine", "Failed to apply gains to hardware equalizer", e)
+        }
+    }
+
     private fun syncActiveBands() {
         _bands.value = if (_mode.value == EQMode.SIMPLE) _simpleBands.value else _expertBands.value
+        applyCurrentGainsToHardware()
     }
 
     private fun updateAllPresetsList() {
@@ -100,11 +168,19 @@ class ParametricEQEngine(context: Context) {
     }
 
     fun toggleEnabled() {
-        _isEnabled.value = !_isEnabled.value
+        setEnabled(!_isEnabled.value)
     }
 
     fun setEnabled(enabled: Boolean) {
         _isEnabled.value = enabled
+        try {
+            hardwareEqualizer?.enabled = enabled
+            if (enabled) {
+                applyCurrentGainsToHardware()
+            }
+        } catch (e: Exception) {
+            Log.e("ParametricEQEngine", "Error setting equalizer enabled state", e)
+        }
     }
 
     fun setMode(newMode: EQMode) {
@@ -168,6 +244,7 @@ class ParametricEQEngine(context: Context) {
     fun resetToFlat() {
         _simpleBands.value = _simpleBands.value.map { it.copy(gainDb = 0.0) }
         _expertBands.value = _expertBands.value.map { it.copy(gainDb = 0.0) }
+        syncActiveBands()
     }
 
     val factoryPresets: List<EQPreset>

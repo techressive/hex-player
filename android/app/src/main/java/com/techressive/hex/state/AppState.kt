@@ -144,6 +144,7 @@ class AppState(
     private val prefs = context.getSharedPreferences("hex_app_state", Context.MODE_PRIVATE)
 
     init {
+        audioPlayer.attachEqEngine(eqEngine)
         loadPersistedState()
     }
 
