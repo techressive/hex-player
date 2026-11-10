@@ -2,6 +2,8 @@ package com.techressive.hex.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -107,8 +109,8 @@ fun NowPlayingScreen(
         modifier = modifier
             .fillMaxSize()
             .background(bgBrush)
-            .androidx.compose.ui.input.pointer.pointerInput(Unit) {
-                androidx.compose.foundation.gestures.detectVerticalDragGestures { _, dragAmount ->
+            .pointerInput(Unit) {
+                detectVerticalDragGestures { _, dragAmount ->
                     // Swipe down gesture to go back!
                     if (dragAmount > 38f) {
                         appState.goBack()
