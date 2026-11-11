@@ -84,6 +84,9 @@ fun HomeScreen(
     // 1. Top 5 recently played tracks
     val topRecent = recentTracks.take(5)
 
+    // 1b. Recently added tracks (newest tracks in library)
+    val recentlyAdded = remember(tracks) { tracks.takeLast(10).reversed() }
+
     // 2. Top plays sorted by playCount
     val topPlays = tracks
         .filter { (playCounts[it.id] ?: 0) > 0 }
@@ -182,6 +185,48 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     items(topRecent, key = { it.id }) { track ->
+                        Column(
+                            modifier = Modifier
+                                .width(120.dp)
+                                .clickable { appState.playTrack(track) }
+                        ) {
+                            AlbumCoverView(
+                                track = track,
+                                modifier = Modifier.size(120.dp),
+                                cornerRadius = 14.dp,
+                                showFetchButton = false
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = track.title,
+                                color = HexColors.PureWhite,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = track.artist,
+                                color = HexColors.SlateGray,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Section 1b: RECENTLY ADDED (Newest Tracks in Library)
+            if (recentlyAdded.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(18.dp))
+                SectionHeader(title = "RECENTLY ADDED", subtitle = "Newest tracks in your library")
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(recentlyAdded, key = { "home_added_${it.id}" }) { track ->
                         Column(
                             modifier = Modifier
                                 .width(120.dp)

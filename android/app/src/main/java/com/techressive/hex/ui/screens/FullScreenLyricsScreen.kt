@@ -77,8 +77,7 @@ fun FullScreenLyricsScreen(
     }
 
     val activeIndex = remember(lyrics, currentPosition) {
-        val idx = lyrics.indexOfLast { it.timestamp <= currentPosition }
-        if (idx >= 0) idx else 0
+        lyrics.indexOfLast { it.timestamp <= (currentPosition + 0.1) }
     }
 
     // Auto-scroll with animation to current line
@@ -86,6 +85,8 @@ fun FullScreenLyricsScreen(
         if (lyrics.isNotEmpty() && activeIndex in lyrics.indices) {
             val target = (activeIndex - 2).coerceAtLeast(0)
             listState.animateScrollToItem(target)
+        } else if (activeIndex < 0 && listState.firstVisibleItemIndex > 0) {
+            listState.animateScrollToItem(0)
         }
     }
 
@@ -263,7 +264,7 @@ fun FullScreenLyricsScreen(
                     ) {
                         itemsIndexed(lyrics, key = { _, line -> line.id }) { index, line ->
                             val isCurrent = index == activeIndex
-                            val isPast = index < activeIndex
+                            val isPast = activeIndex >= 0 && index < activeIndex
 
                             Text(
                                 text = line.text,

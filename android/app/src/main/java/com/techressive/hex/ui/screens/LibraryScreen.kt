@@ -203,17 +203,23 @@ fun LibraryScreen(
         )
         val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
-        // Sync pager when selectedTabIndex changes
-        androidx.compose.runtime.LaunchedEffect(selectedTabIndex) {
-            if (pagerState.currentPage != selectedTabIndex) {
-                pagerState.animateScrollToPage(selectedTabIndex)
+        // Sync appState tab index when pager settles on a new page after user swipe
+        androidx.compose.runtime.LaunchedEffect(pagerState.settledPage) {
+            if (selectedTabIndex != pagerState.settledPage) {
+                appState.setSelectedLibraryTabIndex(pagerState.settledPage)
             }
         }
 
-        // Sync tab index when user swipes left/right on pager
-        androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) {
-            if (selectedTabIndex != pagerState.currentPage) {
-                appState.setSelectedLibraryTabIndex(pagerState.currentPage)
+        // Sync pager when selectedTabIndex changes programmatically (e.g. from tab click or external navigation)
+        androidx.compose.runtime.LaunchedEffect(selectedTabIndex) {
+            if (!pagerState.isScrollInProgress && pagerState.currentPage != selectedTabIndex) {
+                pagerState.animateScrollToPage(
+                    page = selectedTabIndex,
+                    animationSpec = androidx.compose.animation.core.tween(
+                        durationMillis = 320,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                    )
+                )
             }
         }
 
@@ -240,10 +246,16 @@ fun LibraryScreen(
                     Tab(
                         selected = pagerState.currentPage == index,
                         onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(index)
-                            }
                             appState.setSelectedLibraryTabIndex(index)
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(
+                                    page = index,
+                                    animationSpec = androidx.compose.animation.core.tween(
+                                        durationMillis = 320,
+                                        easing = androidx.compose.animation.core.FastOutSlowInEasing
+                                    )
+                                )
+                            }
                         },
                         text = {
                             Text(
@@ -304,6 +316,7 @@ fun LibraryScreen(
         // Swipeable Content with HorizontalPager
         androidx.compose.foundation.pager.HorizontalPager(
             state = pagerState,
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             when (tabs[page]) {
@@ -451,11 +464,12 @@ fun LibraryScreen(
                     }
                 }
                 LibraryTab.RECENT -> {
+                    val recentlyAdded = remember(tracks) { tracks.takeLast(50).reversed() }
                     TrackListView(
-                        tracks = recentTracks,
+                        tracks = recentlyAdded,
                         currentTrack = currentTrack,
                         favorites = favorites,
-                        emptyMessage = "No recently played tracks.",
+                        emptyMessage = "No tracks added yet.",
                         onPlay = { appState.playTrack(it) },
                         onToggleFavorite = { appState.toggleFavorite(it) },
                         onFetchArtwork = { appState.fetchArtworkForTrack(it) },

@@ -40,15 +40,20 @@ fun SyncdLyricsWidget(
 ) {
     if (lyrics.isEmpty()) return
 
-    // Find active line index
+    // Find active line index (with 100ms perceptual lead for natural synchronization)
     val activeIndex = remember(lyrics, currentPosition) {
-        val idx = lyrics.indexOfLast { it.timestamp <= currentPosition }
-        if (idx >= 0) idx else 0
+        lyrics.indexOfLast { it.timestamp <= (currentPosition + 0.1) }
     }
 
     val prevLine = if (activeIndex > 0) lyrics[activeIndex - 1] else null
-    val currentLine = lyrics.getOrNull(activeIndex)
-    val nextLine = if (activeIndex < lyrics.size - 1) lyrics[activeIndex + 1] else null
+    val currentLine = if (activeIndex >= 0) lyrics.getOrNull(activeIndex) else null
+    val nextLine = if (activeIndex >= 0 && activeIndex < lyrics.size - 1) {
+        lyrics[activeIndex + 1]
+    } else if (activeIndex < 0) {
+        lyrics.firstOrNull()
+    } else {
+        null
+    }
 
     Box(
         modifier = modifier
@@ -81,8 +86,8 @@ fun SyncdLyricsWidget(
 
             // Current Line (Highlighted & Centered)
             Text(
-                text = currentLine?.text ?: " ",
-                color = accentColor,
+                text = currentLine?.text ?: (if (activeIndex < 0) lyrics.firstOrNull()?.text ?: "♪ Music Playing ♪" else " "),
+                color = if (activeIndex >= 0) accentColor else accentColor.copy(alpha = 0.45f),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,

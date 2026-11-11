@@ -461,6 +461,11 @@ class AppState(
         val files = dir.listFiles()
         val currentBatch = mutableListOf<Track>()
 
+        // Index companion .lrc files in the folder
+        val lrcMap = files
+            .filter { it.isFile && (it.name?.endsWith(".lrc", ignoreCase = true) == true) }
+            .associateBy { it.name?.substringBeforeLast('.')?.lowercase() ?: "" }
+
         for (f in files) {
             if (f.isDirectory) {
                 scanDocumentFileRecursive(f, outList, onBatchEmitted)
@@ -471,6 +476,19 @@ class AppState(
                     name.endsWith(".dsf") || name.endsWith(".dff") || name.endsWith(".aiff")) {
                     val track = AudioMetadataReader.readTrack(context, f.uri)
                     if (track != null) {
+                        val baseName = f.name?.substringBeforeLast('.')?.lowercase() ?: ""
+                        val lrcDoc = lrcMap[baseName]
+                        if (lrcDoc != null) {
+                            try {
+                                context.contentResolver.openInputStream(lrcDoc.uri)?.use { stream ->
+                                    val text = stream.bufferedReader(Charsets.UTF_8).readText()
+                                    val parsed = LyricsService.parseLrc(text)
+                                    if (parsed.isNotEmpty()) {
+                                        track.syncedLyrics = parsed
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
                         outList.add(track)
                         currentBatch.add(track)
                         if (currentBatch.size >= 15) {

@@ -17,9 +17,13 @@ object LyricsService {
         val cacheKey = "${track.title}_${track.artist}".lowercase()
         lyricsCache[cacheKey]?.let { return@withContext it }
 
+        if (track.syncedLyrics.isNotEmpty()) {
+            return@withContext track.syncedLyrics
+        }
+
         // 1. Check local companion .lrc file in track's parent directory (or SAF tree)
         try {
-            if (track.path.isNotBlank()) {
+            if (track.path.isNotBlank() && !track.path.startsWith("content://")) {
                 val audioFile = File(track.path)
                 val candidates = listOf(
                     File(audioFile.parentFile, "${audioFile.nameWithoutExtension}.lrc"),
@@ -69,30 +73,62 @@ object LyricsService {
                 setRequestProperty("Accept-Charset", "UTF-8")
             }
 
+            var syncedLyrics = ""
+            var plainLyrics = ""
+
             if (conn.responseCode == 200) {
                 val bytes = conn.inputStream.use { it.readBytes() }
                 val response = decodeWithFallbackCharsets(bytes)
                 val json = JSONObject(response)
-                val syncedLyrics = json.optString("syncedLyrics", "")
-                if (syncedLyrics.isNotBlank()) {
-                    val parsed = parseLrc(syncedLyrics)
-                    if (parsed.isNotEmpty()) {
-                        lyricsCache[cacheKey] = parsed
-                        cacheFile.writeText(syncedLyrics, Charsets.UTF_8)
-                        conn.disconnect()
-                        return@withContext parsed
-                    }
-                }
-
-                val plainLyrics = json.optString("plainLyrics", "")
-                if (plainLyrics.isNotBlank()) {
-                    val fallback = parsePlainLyrics(plainLyrics, track.duration)
-                    lyricsCache[cacheKey] = fallback
-                    conn.disconnect()
-                    return@withContext fallback
-                }
+                syncedLyrics = json.optString("syncedLyrics", "")
+                plainLyrics = json.optString("plainLyrics", "")
             }
             conn.disconnect()
+
+            // If direct get didn't have synced lyrics, try LRCLIB search fallback
+            if (syncedLyrics.isBlank()) {
+                try {
+                    val searchUrl = "https://lrclib.net/api/search?track_name=$tName&artist_name=$aName"
+                    val sConn = (URL(searchUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 5000
+                        readTimeout = 5000
+                        setRequestProperty("User-Agent", "HEX-Audiophile-Android/1.0 (lyrics@hex.app)")
+                        setRequestProperty("Accept-Charset", "UTF-8")
+                    }
+                    if (sConn.responseCode == 200) {
+                        val sBytes = sConn.inputStream.use { it.readBytes() }
+                        val sResp = decodeWithFallbackCharsets(sBytes)
+                        val arr = org.json.JSONArray(sResp)
+                        for (i in 0 until arr.length()) {
+                            val item = arr.getJSONObject(i)
+                            val itemSynced = item.optString("syncedLyrics", "")
+                            if (itemSynced.isNotBlank()) {
+                                syncedLyrics = itemSynced
+                                break
+                            }
+                            if (plainLyrics.isBlank()) {
+                                plainLyrics = item.optString("plainLyrics", "")
+                            }
+                        }
+                    }
+                    sConn.disconnect()
+                } catch (_: Exception) {}
+            }
+
+            if (syncedLyrics.isNotBlank()) {
+                val parsed = parseLrc(syncedLyrics)
+                if (parsed.isNotEmpty()) {
+                    lyricsCache[cacheKey] = parsed
+                    try { cacheFile.writeText(syncedLyrics, Charsets.UTF_8) } catch (_: Exception) {}
+                    return@withContext parsed
+                }
+            }
+
+            if (plainLyrics.isNotBlank()) {
+                val fallback = parsePlainLyrics(plainLyrics, track.duration)
+                lyricsCache[cacheKey] = fallback
+                return@withContext fallback
+            }
         } catch (_: Exception) {}
 
         // 4. Return procedural or empty lines
@@ -101,23 +137,26 @@ object LyricsService {
 
     fun parseLrc(content: String): List<LyricLine> {
         val lines = mutableListOf<LyricLine>()
-        val timeRegex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{2,3}))?\]""")
+        val timeRegex = Regex("""\[(\d{1,3}):(\d{2})(?:[.:,](\d{1,3}))?\]""")
 
         content.lines().forEach { rawLine ->
-            val match = timeRegex.find(rawLine)
-            if (match != null) {
-                val minutes = match.groupValues[1].toDoubleOrNull() ?: 0.0
-                val seconds = match.groupValues[2].toDoubleOrNull() ?: 0.0
-                val msString = match.groupValues[3]
-                val fraction = when {
-                    msString.length == 2 -> (msString.toDoubleOrNull() ?: 0.0) / 100.0
-                    msString.length == 3 -> (msString.toDoubleOrNull() ?: 0.0) / 1000.0
-                    else -> 0.0
-                }
-                val timestamp = minutes * 60.0 + seconds + fraction
+            val matches = timeRegex.findAll(rawLine).toList()
+            if (matches.isNotEmpty()) {
                 val text = rawLine.replace(timeRegex, "").trim()
                 if (text.isNotBlank()) {
-                    lines.add(LyricLine(timestamp, text))
+                    for (match in matches) {
+                        val minutes = match.groupValues[1].toDoubleOrNull() ?: 0.0
+                        val seconds = match.groupValues[2].toDoubleOrNull() ?: 0.0
+                        val fracStr = match.groupValues[3]
+                        val fraction = when (fracStr.length) {
+                            1 -> (fracStr.toDoubleOrNull() ?: 0.0) / 10.0
+                            2 -> (fracStr.toDoubleOrNull() ?: 0.0) / 100.0
+                            3 -> (fracStr.toDoubleOrNull() ?: 0.0) / 1000.0
+                            else -> 0.0
+                        }
+                        val timestamp = minutes * 60.0 + seconds + fraction
+                        lines.add(LyricLine(timestamp, text))
+                    }
                 }
             }
         }

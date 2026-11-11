@@ -263,6 +263,7 @@ class HexAudioPlayer(
             _duration.value = track.duration
             _currentPosition.value = 0.0
             _isPlaying.value = true
+            startProgressTracking()
         } catch (e: Exception) {
             _lastError.value = e.localizedMessage
             Log.e(TAG, "Error playing track: ${track.title} (URI: ${track.uri})", e)
@@ -285,18 +286,22 @@ class HexAudioPlayer(
     fun togglePlayPause() {
         val player = exoPlayer ?: return
         if (player.isPlaying) {
-            player.pause()
+            pause()
         } else {
-            player.play()
+            play()
         }
     }
 
     fun play() {
         exoPlayer?.play()
+        _isPlaying.value = true
+        startProgressTracking()
     }
 
     fun pause() {
         exoPlayer?.pause()
+        _isPlaying.value = false
+        stopProgressTracking()
     }
 
     fun skipNext() {
@@ -312,6 +317,9 @@ class HexAudioPlayer(
         val posMs = (seconds * 1000.0).toLong().coerceAtLeast(0L)
         player.seekTo(posMs)
         _currentPosition.value = seconds
+        if (_isPlaying.value) {
+            startProgressTracking()
+        }
     }
 
     fun setVolume(vol: Float) {
@@ -346,7 +354,7 @@ class HexAudioPlayer(
                     val dur = player.duration / 1000.0
                     if (dur > 0) _duration.value = dur
                 }
-                delay(200)
+                delay(50)
             }
         }
     }
