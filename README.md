@@ -1,5 +1,5 @@
 # <p align="center"><img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="HEX Logo" /><br>HEX — Audiophile Music Player</p>
-
+# <p align="center"><img src="[https://github.com/techressive/hex-player/blob/main/Sources/Hex%20Music%20App%20Showcase%20Large.jpeg]" width="1280" height="720" alt="HEX Logo"
 <p align="center">
   <b>A bit-perfect, ultra-low latency, OLED-native Hi-Res audio player engineered with modern Jetpack Compose for Android.</b>
 </p>
