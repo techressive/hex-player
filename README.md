@@ -1,5 +1,14 @@
-# <p align="center"><img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="HEX Logo" /><br>HEX — Audiophile Music Player</p>
-# <p align="center"><img src="[https://github.com/techressive/hex-player/blob/main/Sources/Hex%20Music%20App%20Showcase%20Large.jpeg]" width="1280" height="720" alt="HEX Logo"
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/techressive/hex-player/main/Sources/Hex%20Music%20App%20Showcase%20Large.jpeg" width="100%" alt="HEX — Audiophile Music Player Showcase" />
+</p>
+
+<h1 align="center">
+  <img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="HEX Logo" />
+  <br>
+  HEX — Audiophile Music Player
+</h1>
+
 <p align="center">
   <b>A bit-perfect, ultra-low latency, OLED-native Hi-Res audio player engineered with modern Jetpack Compose for Android.</b>
 </p>
@@ -11,6 +20,8 @@
   <img src="https://img.shields.io/badge/Architecture-ARM64--v8a-0091BD?style=for-the-badge&logo=arm&logoColor=white" alt="ARM64" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License" />
 </p>
+
+
 
 ---
 
