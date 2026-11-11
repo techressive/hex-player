@@ -316,7 +316,6 @@ fun LibraryScreen(
         // Swipeable Content with HorizontalPager
         androidx.compose.foundation.pager.HorizontalPager(
             state = pagerState,
-            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             when (tabs[page]) {
