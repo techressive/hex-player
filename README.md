@@ -4,7 +4,7 @@
 </p>
 
 <h1 align="center">
-  <img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" width="96" height="96" alt="HEX Logo" />
+  
   <br>
   HEX — Audiophile Music Player
 </h1>
