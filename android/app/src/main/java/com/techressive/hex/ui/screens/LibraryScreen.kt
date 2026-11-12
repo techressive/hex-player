@@ -28,13 +28,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -87,15 +90,29 @@ fun LibraryScreen(
     val artistSeparators by appState.artistSeparators.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
 
+    val canGoBack by appState.canGoBack.collectAsState()
     val selectedTabIndex by appState.selectedLibraryTabIndex.collectAsState()
     val trackSortOrder by appState.trackSortOrder.collectAsState()
     val themeMode by appState.themeMode.collectAsState()
     val tabs = LibraryTab.values()
 
     var showSortMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var searchQuery by remember { androidx.compose.runtime.mutableStateOf("") }
 
     val sortedTracks = remember(tracks, trackSortOrder) {
         appState.getSortedTracks(tracks)
+    }
+
+    val searchFilteredTracks = remember(sortedTracks, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
+        else {
+            val q = searchQuery.trim().lowercase()
+            sortedTracks.filter { track ->
+                track.title.lowercase().contains(q) ||
+                track.artist.lowercase().contains(q) ||
+                track.album.lowercase().contains(q)
+            }
+        }
     }
 
     // SAF Directory Picker Launcher
@@ -112,28 +129,47 @@ fun LibraryScreen(
             .fillMaxSize()
             .background(screenBg)
     ) {
-        // Top Bar with Universal Top-Left Back Button
+        // Top Bar with Hamburger Menu (3 lines), optional Back Button, and Title
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // 3 Lines Sidebar Menu Button
                 IconButton(
-                    onClick = { appState.goBack() },
+                    onClick = { appState.openDrawer() },
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
                         .background(activeSkin.surfaceColor)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = HexColors.OffWhite,
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Menu",
+                        tint = HexColors.PureWhite,
                         modifier = Modifier.size(20.dp)
                     )
+                }
+
+                if (canGoBack) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = { appState.goBack() },
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(activeSkin.surfaceColor)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = HexColors.OffWhite,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(12.dp))
@@ -176,6 +212,65 @@ fun LibraryScreen(
             }
         }
 
+        // Library Search Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(activeSkin.surfaceColor)
+                .border(
+                    width = 1.dp,
+                    color = if (searchQuery.isNotBlank()) primaryAccent else activeSkin.cardBorderColor,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Search",
+                tint = if (searchQuery.isNotBlank()) primaryAccent else HexColors.SlateGray,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            androidx.compose.foundation.text.BasicTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = HexColors.PureWhite,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(primaryAccent),
+                modifier = Modifier.weight(1f),
+                decorationBox = { innerTextField ->
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = "Search tracks, artists, albums...",
+                            color = HexColors.SlateGray.copy(alpha = 0.7f),
+                            fontSize = 13.sp
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            if (searchQuery.isNotEmpty()) {
+                IconButton(
+                    onClick = { searchQuery = "" },
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Clear",
+                        tint = HexColors.SlateGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
         if (isScanning) {
             Row(
                 modifier = Modifier
@@ -197,7 +292,39 @@ fun LibraryScreen(
             }
         }
 
-        val pagerState = androidx.compose.foundation.pager.rememberPagerState(
+        if (searchQuery.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "SEARCH RESULTS",
+                    color = HexColors.Lavender,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "${searchFilteredTracks.size} found",
+                    color = HexColors.SlateGray,
+                    fontSize = 11.sp
+                )
+            }
+            TrackListView(
+                tracks = searchFilteredTracks,
+                currentTrack = currentTrack,
+                favorites = favorites,
+                emptyMessage = "No tracks found matching \"$searchQuery\"",
+                onPlay = { appState.playTrack(it) },
+                onToggleFavorite = { appState.toggleFavorite(it) },
+                onFetchArtwork = { appState.fetchArtworkForTrack(it) },
+                onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
+            )
+        } else {
+            val pagerState = androidx.compose.foundation.pager.rememberPagerState(
             initialPage = selectedTabIndex.coerceIn(0, tabs.size - 1),
             pageCount = { tabs.size }
         )
@@ -503,6 +630,7 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
         }
     }
 }

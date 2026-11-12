@@ -1,9 +1,11 @@
 package com.techressive.hex.state
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import androidx.documentfile.provider.DocumentFile
 import com.techressive.hex.audio.HexAudioPlayer
@@ -90,6 +92,14 @@ class AppState(
     // Equalizer Sheet Visibility
     private val _isEqSheetVisible = MutableStateFlow(false)
     val isEqSheetVisible: StateFlow<Boolean> = _isEqSheetVisible.asStateFlow()
+
+    // Navigation Sidebar Drawer State
+    private val _isDrawerOpen = MutableStateFlow(false)
+    val isDrawerOpen: StateFlow<Boolean> = _isDrawerOpen.asStateFlow()
+
+    fun openDrawer() { _isDrawerOpen.value = true }
+    fun closeDrawer() { _isDrawerOpen.value = false }
+    fun toggleDrawer() { _isDrawerOpen.value = !_isDrawerOpen.value }
 
     // Library State
     private val _tracks = MutableStateFlow<List<Track>>(emptyList())
@@ -424,6 +434,14 @@ class AppState(
     // Import Directory via SAF
     fun importDirectoryUri(treeUri: Uri) {
         scope.launch(Dispatchers.IO) {
+            try {
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(treeUri, takeFlags)
+                prefs.edit().putString("persisted_tree_uri", treeUri.toString()).apply()
+            } catch (e: Exception) {
+                Log.e("AppState", "Failed to take persistable URI permission for treeUri: $treeUri", e)
+            }
+
             _isScanning.value = true
             val root = DocumentFile.fromTreeUri(context, treeUri) ?: return@launch
             val scannedTracks = mutableListOf<Track>()

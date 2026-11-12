@@ -1,18 +1,21 @@
 package com.techressive.hex.audio
 
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.session.MediaSession
 import com.techressive.hex.metadata.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +62,7 @@ class HexAudioPlayer(
         private const val KEY_OUTPUT_METHOD = "output_method"
         private const val KEY_SAMPLE_RATE = "sample_rate"
         private const val KEY_SAMPLE_FORMAT = "sample_format"
+        var activeMediaSession: MediaSession? = null
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -171,6 +175,113 @@ class HexAudioPlayer(
         initPlayer()
     }
 
+    val player: ExoPlayer? get() = exoPlayer
+    private var mediaSession: MediaSession? = null
+    private var hasAttemptedStandardFallback = false
+
+    fun getMediaSession(): MediaSession? = mediaSession
+
+    private fun bindMediaSession() {
+        val p = exoPlayer ?: return
+        try {
+            mediaSession?.release()
+            mediaSession = MediaSession.Builder(context, p)
+                .setId("HexAudioPlayerSession")
+                .build()
+            activeMediaSession = mediaSession
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build MediaSession", e)
+        }
+    }
+
+    private fun createPlayerListener(): Player.Listener {
+        return object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                _isPlaying.value = playing
+                if (playing) {
+                    spectrumAnalyzer.startSimulation()
+                    startProgressTracking()
+                } else {
+                    spectrumAnalyzer.stopSimulation()
+                    stopProgressTracking()
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    bindEqSession()
+                    val durMs = exoPlayer?.duration ?: 0L
+                    if (durMs > 0) {
+                        _duration.value = durMs / 1000.0
+                    }
+                } else if (playbackState == Player.STATE_ENDED) {
+                    _isPlaying.value = false
+                    spectrumAnalyzer.stopSimulation()
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e(TAG, "ExoPlayer error occurred: ${error.errorCodeName} (${error.errorCode})", error)
+                if ((error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                     error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
+                     error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED) &&
+                    !hasAttemptedStandardFallback) {
+                    hasAttemptedStandardFallback = true
+                    Log.w(TAG, "Audio hardware sink rejected float format. Gracefully falling back to standard 16-bit PCM AudioSink.")
+                    fallbackToStandardPlayer()
+                    return
+                }
+                _isPlaying.value = false
+                _lastError.value = error.localizedMessage ?: "Playback error: ${error.errorCodeName}"
+                spectrumAnalyzer.stopSimulation()
+            }
+        }
+    }
+
+    private fun fallbackToStandardPlayer() {
+        val wasPlaying = _isPlaying.value
+        val pos = _currentPosition.value
+        val track = currentTrack
+        try {
+            exoPlayer?.stop()
+            exoPlayer?.release()
+        } catch (_: Exception) {}
+
+        try {
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .build()
+
+            exoPlayer = ExoPlayer.Builder(context)
+                .setAudioAttributes(audioAttributes, true)
+                .setHandleAudioBecomingNoisy(true)
+                .setWakeMode(C.WAKE_MODE_LOCAL)
+                .build().apply {
+                    volume = this@HexAudioPlayer._volume.value
+                    addListener(createPlayerListener())
+                }
+            bindEqSession()
+            bindMediaSession()
+
+            if (track != null) {
+                val mediaItem = buildMediaItem(track)
+                exoPlayer?.setMediaItem(mediaItem)
+                exoPlayer?.prepare()
+                if (pos > 0.0) {
+                    seekTo(pos)
+                }
+                if (wasPlaying) {
+                    play()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Standard player fallback failed", e)
+            _isPlaying.value = false
+            _lastError.value = e.localizedMessage
+        }
+    }
+
     private fun initPlayer() {
         try {
             val method = _outputMethod.value
@@ -195,62 +306,28 @@ class HexAudioPlayer(
             val audioAttributes = AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_NONE)
-                .apply {
-                    if (method == AudioOutputMethod.AAUDIO || method == AudioOutputMethod.HI_RES_DIRECT) {
-                        setFlags(C.FLAG_AUDIBILITY_ENFORCED)
-                    }
-                }
                 .build()
 
             exoPlayer = ExoPlayer.Builder(context, renderersFactory)
                 .setAudioAttributes(audioAttributes, true)
+                .setHandleAudioBecomingNoisy(true)
+                .setWakeMode(C.WAKE_MODE_LOCAL)
                 .build().apply {
                     volume = this@HexAudioPlayer._volume.value
-                    addListener(object : Player.Listener {
-                        override fun onIsPlayingChanged(playing: Boolean) {
-                            _isPlaying.value = playing
-                            if (playing) {
-                                spectrumAnalyzer.startSimulation()
-                                startProgressTracking()
-                            } else {
-                                spectrumAnalyzer.stopSimulation()
-                                stopProgressTracking()
-                            }
-                        }
-
-                        override fun onPlaybackStateChanged(playbackState: Int) {
-                            if (playbackState == Player.STATE_READY) {
-                                bindEqSession()
-                                val durMs = exoPlayer?.duration ?: 0L
-                                if (durMs > 0) {
-                                    _duration.value = durMs / 1000.0
-                                }
-                            } else if (playbackState == Player.STATE_ENDED) {
-                                _isPlaying.value = false
-                                spectrumAnalyzer.stopSimulation()
-                            }
-                        }
-
-                        override fun onPlayerError(error: PlaybackException) {
-                            _isPlaying.value = false
-                            _lastError.value = error.localizedMessage ?: "Playback error"
-                            spectrumAnalyzer.stopSimulation()
-                            Log.e(TAG, "ExoPlayer error occurred: ${error.errorCodeName}", error)
-                        }
-                    })
+                    addListener(createPlayerListener())
                 }
             bindEqSession()
+            bindMediaSession()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize custom audio sink, falling back to standard ExoPlayer", e)
-            exoPlayer = ExoPlayer.Builder(context).build()
-            bindEqSession()
+            fallbackToStandardPlayer()
         }
     }
 
     fun playTrack(track: Track) {
         currentTrack = track
         _lastError.value = null
+        hasAttemptedStandardFallback = false
         val player = exoPlayer ?: return
         try {
             val mediaItem = buildMediaItem(track)
@@ -264,23 +341,48 @@ class HexAudioPlayer(
             _currentPosition.value = 0.0
             _isPlaying.value = true
             startProgressTracking()
+            startPlaybackService()
         } catch (e: Exception) {
             _lastError.value = e.localizedMessage
             Log.e(TAG, "Error playing track: ${track.title} (URI: ${track.uri})", e)
         }
     }
 
+    private fun startPlaybackService() {
+        try {
+            val intent = Intent(context, HexPlaybackService::class.java)
+            context.startService(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start HexPlaybackService", e)
+        }
+    }
+
     private fun buildMediaItem(track: Track): MediaItem {
-        // Direct URI is primary and authoritative for SAF content:// and file://
-        if (track.uri != Uri.EMPTY) {
-            return MediaItem.fromUri(track.uri)
+        val metadataBuilder = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artist)
+            .setAlbumTitle(track.album)
+        if (track.artworkUri != null) {
+            metadataBuilder.setArtworkUri(track.artworkUri)
         }
-        val p = track.path
-        return if (p.startsWith("content://") || p.startsWith("file://") || p.startsWith("http://") || p.startsWith("https://")) {
-            MediaItem.fromUri(Uri.parse(p))
+        val mediaMetadata = metadataBuilder.build()
+
+        val uriToPlay = if (track.uri != Uri.EMPTY) {
+            track.uri
         } else {
-            MediaItem.fromUri(Uri.fromFile(File(p)))
+            val p = track.path
+            if (p.startsWith("content://") || p.startsWith("file://") || p.startsWith("http://") || p.startsWith("https://")) {
+                Uri.parse(p)
+            } else {
+                Uri.fromFile(File(p))
+            }
         }
+
+        return MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(uriToPlay)
+            .setMediaMetadata(mediaMetadata)
+            .build()
     }
 
     fun togglePlayPause() {
@@ -296,6 +398,7 @@ class HexAudioPlayer(
         exoPlayer?.play()
         _isPlaying.value = true
         startProgressTracking()
+        startPlaybackService()
     }
 
     fun pause() {
@@ -367,6 +470,11 @@ class HexAudioPlayer(
     fun release() {
         stopProgressTracking()
         spectrumAnalyzer.stopSimulation()
+        try {
+            mediaSession?.release()
+            mediaSession = null
+            activeMediaSession = null
+        } catch (_: Exception) {}
         exoPlayer?.release()
         exoPlayer = null
     }
