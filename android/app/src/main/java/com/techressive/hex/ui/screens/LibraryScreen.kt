@@ -9,6 +9,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,10 +27,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -37,6 +40,9 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -50,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,8 +70,13 @@ import androidx.compose.ui.unit.sp
 import com.techressive.hex.metadata.Track
 import com.techressive.hex.state.AppState
 import com.techressive.hex.state.Screen
+import com.techressive.hex.ui.components.AddToPlaylistDialog
 import com.techressive.hex.ui.components.AlbumCoverView
+import com.techressive.hex.ui.components.EditTagDialog
+import com.techressive.hex.ui.components.TrackDetailsDialog
+import com.techressive.hex.ui.components.TrackOptionsSheet
 import com.techressive.hex.ui.theme.HexColors
+
 
 enum class LibraryTab(val label: String) {
     ALL_TRACKS("All Tracks"),
@@ -84,6 +96,7 @@ fun LibraryScreen(
     val favorites by appState.favorites.collectAsState()
     val recentTracks by appState.recentTracks.collectAsState()
     val currentTrack by appState.currentTrack.collectAsState()
+    val playlists by appState.playlists.collectAsState()
     val isScanning by appState.isScanning.collectAsState()
     val primaryAccent by appState.accentColorPrimary.collectAsState()
     val isArtistSeparationEnabled by appState.isArtistSeparationEnabled.collectAsState()
@@ -98,6 +111,12 @@ fun LibraryScreen(
 
     var showSortMenu by remember { androidx.compose.runtime.mutableStateOf(false) }
     var searchQuery by remember { androidx.compose.runtime.mutableStateOf("") }
+
+    // Dialog & Options Sheet States
+    var selectedTrackForOptions by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForDetails by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForEditTags by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForPlaylist by remember { mutableStateOf<Track?>(null) }
 
     val sortedTracks = remember(tracks, trackSortOrder) {
         appState.getSortedTracks(tracks)
@@ -319,6 +338,7 @@ fun LibraryScreen(
                 favorites = favorites,
                 emptyMessage = "No tracks found matching \"$searchQuery\"",
                 onPlay = { appState.playTrack(it) },
+                onTrackOptions = { selectedTrackForOptions = it },
                 onToggleFavorite = { appState.toggleFavorite(it) },
                 onFetchArtwork = { appState.fetchArtworkForTrack(it) },
                 onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
@@ -451,6 +471,7 @@ fun LibraryScreen(
                     currentTrack = currentTrack,
                     favorites = favorites,
                     onPlay = { appState.playTrack(it) },
+                    onTrackOptions = { selectedTrackForOptions = it },
                     onToggleFavorite = { appState.toggleFavorite(it) },
                     onFetchArtwork = { appState.fetchArtworkForTrack(it) },
                     onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
@@ -597,6 +618,7 @@ fun LibraryScreen(
                         favorites = favorites,
                         emptyMessage = "No tracks added yet.",
                         onPlay = { appState.playTrack(it) },
+                        onTrackOptions = { selectedTrackForOptions = it },
                         onToggleFavorite = { appState.toggleFavorite(it) },
                         onFetchArtwork = { appState.fetchArtworkForTrack(it) },
                         onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
@@ -610,28 +632,170 @@ fun LibraryScreen(
                         favorites = favorites,
                         emptyMessage = "No favorite songs yet. Tap the heart icon on any song.",
                         onPlay = { appState.playTrack(it) },
+                        onTrackOptions = { selectedTrackForOptions = it },
                         onToggleFavorite = { appState.toggleFavorite(it) },
                         onFetchArtwork = { appState.fetchArtworkForTrack(it) },
                         onArtistClick = { appState.navigateTo(Screen.ArtistBio(it)) }
                     )
                 }
                 LibraryTab.PLAYLISTS -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Playlists will appear here.",
-                            color = HexColors.SlateGray,
-                            fontSize = 14.sp
-                        )
+                    if (playlists.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.Default.QueueMusic,
+                                    contentDescription = "Playlists",
+                                    tint = HexColors.SlateGray,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "No playlists yet",
+                                    color = HexColors.PureWhite,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Hold down on any song and tap \"Add to Playlist\" to create a playlist.",
+                                    color = HexColors.SlateGray,
+                                    fontSize = 13.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(playlists.keys.toList()) { playlistName ->
+                                val plTracks = playlists[playlistName] ?: emptyList()
+                                val firstPlTrack = plTracks.firstOrNull()
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (plTracks.isNotEmpty()) {
+                                                appState.playTrack(plTracks.first())
+                                            }
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AlbumCoverView(
+                                        track = firstPlTrack,
+                                        modifier = Modifier.size(48.dp),
+                                        cornerRadius = 10.dp,
+                                        showFetchButton = false
+                                    )
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = playlistName,
+                                            color = HexColors.PureWhite,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "${plTracks.size} tracks",
+                                            color = HexColors.SlateGray,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    if (plTracks.isNotEmpty()) {
+                                        IconButton(
+                                            onClick = { appState.playTrack(plTracks.first()) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayArrow,
+                                                contentDescription = "Play Playlist",
+                                                tint = HexColors.CobaltBlue,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = { appState.deletePlaylist(playlistName) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete Playlist",
+                                            tint = HexColors.SlateGray.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
         }
+    }
+
+    // Modal Bottom Sheet & Dialogs for Tracks
+    if (selectedTrackForOptions != null) {
+        val t = selectedTrackForOptions!!
+        TrackOptionsSheet(
+            track = t,
+            isFavorite = favorites.contains(t.id),
+            activeSkin = activeSkin,
+            onDismiss = { selectedTrackForOptions = null },
+            onViewDetails = { selectedTrackForDetails = t },
+            onEditTags = { selectedTrackForEditTags = t },
+            onAddToPlaylist = { selectedTrackForPlaylist = t },
+            onGoToArtist = { artist -> appState.navigateTo(Screen.ArtistBio(artist)) },
+            onGoToAlbum = { album, artist -> appState.navigateTo(Screen.AlbumDetail(album, artist)) },
+            onToggleFavorite = { appState.toggleFavorite(t) }
+        )
+    }
+
+    if (selectedTrackForDetails != null) {
+        TrackDetailsDialog(
+            track = selectedTrackForDetails!!,
+            activeSkin = activeSkin,
+            onDismiss = { selectedTrackForDetails = null }
+        )
+    }
+
+    if (selectedTrackForEditTags != null) {
+        val t = selectedTrackForEditTags!!
+        EditTagDialog(
+            track = t,
+            activeSkin = activeSkin,
+            onDismiss = { selectedTrackForEditTags = null },
+            onSave = { newTitle, newArtist, newAlbum, newGenre, newYear, newTrackNumber, newArtworkUri, applyToAlbum ->
+                appState.updateTrackMetadata(
+                    track = t,
+                    newTitle = newTitle,
+                    newArtist = newArtist,
+                    newAlbum = newAlbum,
+                    newGenre = newGenre,
+                    newYear = newYear,
+                    newTrackNumber = newTrackNumber,
+                    newArtworkUri = newArtworkUri,
+                    applyArtworkToAlbum = applyToAlbum
+                )
+            }
+        )
+    }
+
+    if (selectedTrackForPlaylist != null) {
+        val t = selectedTrackForPlaylist!!
+        AddToPlaylistDialog(
+            track = t,
+            playlists = playlists,
+            activeSkin = activeSkin,
+            onDismiss = { selectedTrackForPlaylist = null },
+            onSelectPlaylist = { plName -> appState.addTrackToPlaylist(plName, t) },
+            onCreatePlaylist = { plName -> appState.createPlaylist(plName, t) }
+        )
     }
 }
 
@@ -642,6 +806,7 @@ fun TrackListView(
     favorites: Set<String>,
     emptyMessage: String = "Your library is empty. Add a music folder to start listening.",
     onPlay: (Track) -> Unit,
+    onTrackOptions: (Track) -> Unit = {},
     onToggleFavorite: (Track) -> Unit,
     onFetchArtwork: (Track) -> Unit,
     onArtistClick: (String) -> Unit
@@ -667,8 +832,12 @@ fun TrackListView(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .animateItemPlacement()
                         .background(if (isPlayingThis) HexColors.CobaltBlue.copy(alpha = 0.12f) else Color.Transparent)
-                        .clickable { onPlay(track) }
+                        .combinedClickable(
+                            onClick = { onPlay(track) },
+                            onLongClick = { onTrackOptions(track) }
+                        )
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {

@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.techressive.hex.state.AppState
 import com.techressive.hex.state.Screen
+import com.techressive.hex.ui.components.FirstLaunchWelcomeScreen
 import com.techressive.hex.ui.components.HexSplashScreen
 import com.techressive.hex.ui.components.MiniPlayerBar
 import com.techressive.hex.ui.screens.ArtistBioScreen
@@ -80,6 +82,7 @@ class MainActivity : ComponentActivity() {
             val currentScreen by appState.currentScreen.collectAsState()
             val currentTrack by appState.currentTrack.collectAsState()
             val tracks by appState.tracks.collectAsState()
+            val hasCompletedOnboarding by appState.hasCompletedOnboarding.collectAsState()
             val canGoBack by appState.canGoBack.collectAsState()
             val isEqVisible by appState.isEqSheetVisible.collectAsState()
             val isDrawerOpen by appState.isDrawerOpen.collectAsState()
@@ -124,6 +127,12 @@ class MainActivity : ComponentActivity() {
                 ) { isSplash ->
                     if (isSplash) {
                         HexSplashScreen(onFinish = { showSplash = false })
+                    } else if (!hasCompletedOnboarding && tracks.isEmpty()) {
+                        FirstLaunchWelcomeScreen(
+                            activeSkin = activeSkin,
+                            onFolderSelected = { uri -> appState.importDirectoryUri(uri) },
+                            onSkip = { appState.setCompletedOnboarding(true) }
+                        )
                     } else {
                         val isImmersive = currentScreen is Screen.NowPlaying || currentScreen is Screen.FullScreenLyrics
 
@@ -328,27 +337,28 @@ class MainActivity : ComponentActivity() {
                                 AnimatedContent(
                                     targetState = currentScreen,
                                     transitionSpec = {
+                                        val fluidEase = CubicBezierEasing(0.2f, 0f, 0f, 1f)
                                         if (targetState is Screen.NowPlaying || targetState is Screen.FullScreenLyrics) {
                                             (androidx.compose.animation.slideInVertically(
-                                                animationSpec = tween(340),
+                                                animationSpec = tween(360, easing = fluidEase),
                                                 initialOffsetY = { height -> height }
-                                            ) + fadeIn(animationSpec = tween(340)))
+                                            ) + fadeIn(animationSpec = tween(360, easing = fluidEase)))
                                                 .togetherWith(
                                                     androidx.compose.animation.slideOutVertically(
-                                                        animationSpec = tween(280),
+                                                        animationSpec = tween(300, easing = fluidEase),
                                                         targetOffsetY = { height -> height }
-                                                    ) + fadeOut(animationSpec = tween(280))
+                                                    ) + fadeOut(animationSpec = tween(300, easing = fluidEase))
                                                 )
                                         } else {
                                             (androidx.compose.animation.scaleIn(
-                                                initialScale = 0.93f,
-                                                animationSpec = tween(260)
-                                            ) + fadeIn(animationSpec = tween(260)))
+                                                initialScale = 0.94f,
+                                                animationSpec = tween(280, easing = fluidEase)
+                                            ) + fadeIn(animationSpec = tween(280, easing = fluidEase)))
                                                 .togetherWith(
                                                     androidx.compose.animation.scaleOut(
-                                                        targetScale = 0.93f,
-                                                        animationSpec = tween(240)
-                                                    ) + fadeOut(animationSpec = tween(240))
+                                                        targetScale = 0.94f,
+                                                        animationSpec = tween(260, easing = fluidEase)
+                                                    ) + fadeOut(animationSpec = tween(260, easing = fluidEase))
                                                 )
                                         }
                                     },

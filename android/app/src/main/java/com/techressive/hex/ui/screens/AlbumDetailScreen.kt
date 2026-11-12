@@ -1,8 +1,15 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.techressive.hex.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
@@ -30,11 +38,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,7 +52,11 @@ import androidx.compose.ui.unit.sp
 import com.techressive.hex.metadata.Track
 import com.techressive.hex.state.AppState
 import com.techressive.hex.state.Screen
+import com.techressive.hex.ui.components.AddToPlaylistDialog
 import com.techressive.hex.ui.components.AlbumCoverView
+import com.techressive.hex.ui.components.EditTagDialog
+import com.techressive.hex.ui.components.TrackDetailsDialog
+import com.techressive.hex.ui.components.TrackOptionsSheet
 import com.techressive.hex.ui.theme.HexColors
 
 @Composable
@@ -55,6 +68,8 @@ fun AlbumDetailScreen(
 ) {
     val allTracks by appState.tracks.collectAsState()
     val currentTrack by appState.currentTrack.collectAsState()
+    val favorites by appState.favorites.collectAsState()
+    val playlists by appState.playlists.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
     val primaryAccent by appState.accentColorPrimary.collectAsState()
 
@@ -66,6 +81,21 @@ fun AlbumDetailScreen(
     val firstTrack = albumTracks.firstOrNull()
     val totalDurationSec = albumTracks.sumOf { it.durationMs } / 1000
     val totalMin = totalDurationSec / 60
+
+    // Custom Album Cover Picker
+    val coverPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            appState.updateAlbumArtwork(albumName, uri)
+        }
+    }
+
+    // Modal Sheet & Dialog States
+    var selectedTrackForOptions by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForDetails by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForEditTags by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForPlaylist by remember { mutableStateOf<Track?>(null) }
 
     Box(
         modifier = modifier
@@ -112,12 +142,37 @@ fun AlbumDetailScreen(
                     .padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                AlbumCoverView(
-                    track = firstTrack,
-                    modifier = Modifier.size(110.dp),
-                    cornerRadius = 14.dp,
-                    showFetchButton = false
-                )
+                Box(
+                    modifier = Modifier
+                        .size(110.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { coverPickerLauncher.launch("image/*") }
+                ) {
+                    AlbumCoverView(
+                        track = firstTrack,
+                        modifier = Modifier.fillMaxSize(),
+                        cornerRadius = 14.dp,
+                        showFetchButton = false
+                    )
+
+                    // Small edit icon overlay on hover/corner
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .size(26.dp)
+                            .clip(CircleShape)
+                            .background(HexColors.PureBlack.copy(alpha = 0.7f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Change Cover",
+                            tint = HexColors.Lavender,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.width(16.dp))
 
@@ -145,6 +200,14 @@ fun AlbumDetailScreen(
                         text = "${albumTracks.size} tracks • $totalMin min",
                         color = HexColors.SlateGray,
                         fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Tap cover to change artwork",
+                        color = HexColors.CobaltBlue,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable { coverPickerLauncher.launch("image/*") }
                     )
                 }
             }
@@ -202,7 +265,7 @@ fun AlbumDetailScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Track List
+            // Track List with combinedClickable for Long Press Context Menu
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 itemsIndexed(albumTracks, key = { _, track -> track.id }) { index, track ->
                     val isPlayingThis = track.id == currentTrack?.id
@@ -213,7 +276,10 @@ fun AlbumDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(if (isPlayingThis) HexColors.CobaltBlue.copy(alpha = 0.12f) else Color.Transparent)
-                            .clickable { appState.playTrack(track) }
+                            .combinedClickable(
+                                onClick = { appState.playTrack(track) },
+                                onLongClick = { selectedTrackForOptions = track }
+                            )
                             .padding(horizontal = 20.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -252,6 +318,65 @@ fun AlbumDetailScreen(
                     }
                 }
             }
+        }
+
+        // Modal Bottom Sheet & Dialogs
+        if (selectedTrackForOptions != null) {
+            val t = selectedTrackForOptions!!
+            TrackOptionsSheet(
+                track = t,
+                isFavorite = favorites.contains(t.id),
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForOptions = null },
+                onViewDetails = { selectedTrackForDetails = t },
+                onEditTags = { selectedTrackForEditTags = t },
+                onAddToPlaylist = { selectedTrackForPlaylist = t },
+                onGoToArtist = { artist -> appState.navigateTo(Screen.ArtistBio(artist)) },
+                onGoToAlbum = { album, artist -> appState.navigateTo(Screen.AlbumDetail(album, artist)) },
+                onToggleFavorite = { appState.toggleFavorite(t) }
+            )
+        }
+
+        if (selectedTrackForDetails != null) {
+            TrackDetailsDialog(
+                track = selectedTrackForDetails!!,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForDetails = null }
+            )
+        }
+
+        if (selectedTrackForEditTags != null) {
+            val t = selectedTrackForEditTags!!
+            EditTagDialog(
+                track = t,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForEditTags = null },
+                onSave = { newTitle, newArtist, newAlbum, newGenre, newYear, newTrackNumber, newArtworkUri, applyToAlbum ->
+                    appState.updateTrackMetadata(
+                        track = t,
+                        newTitle = newTitle,
+                        newArtist = newArtist,
+                        newAlbum = newAlbum,
+                        newGenre = newGenre,
+                        newYear = newYear,
+                        newTrackNumber = newTrackNumber,
+                        newArtworkUri = newArtworkUri,
+                        applyArtworkToAlbum = applyToAlbum
+                    )
+                }
+            )
+        }
+
+        if (selectedTrackForPlaylist != null) {
+            val t = selectedTrackForPlaylist!!
+            AddToPlaylistDialog(
+                track = t,
+                playlists = playlists,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForPlaylist = null },
+                onSelectPlaylist = { plName -> appState.addTrackToPlaylist(plName, t) },
+                onCreatePlaylist = { plName -> appState.createPlaylist(plName, t) }
+            )
         }
     }
 }

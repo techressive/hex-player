@@ -1,9 +1,16 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.techressive.hex.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,7 +40,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,7 +59,12 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.techressive.hex.metadata.Track
 import com.techressive.hex.state.AppState
+import com.techressive.hex.state.Screen
+import com.techressive.hex.ui.components.AddToPlaylistDialog
 import com.techressive.hex.ui.components.AlbumCoverView
+import com.techressive.hex.ui.components.EditTagDialog
+import com.techressive.hex.ui.components.TrackDetailsDialog
+import com.techressive.hex.ui.components.TrackOptionsSheet
 import com.techressive.hex.ui.theme.HexColors
 
 @Composable
@@ -63,6 +78,7 @@ fun ArtistBioScreen(
     val allTracks by appState.tracks.collectAsState()
     val currentTrack by appState.currentTrack.collectAsState()
     val favorites by appState.favorites.collectAsState()
+    val playlists by appState.playlists.collectAsState()
     val isArtistSeparationEnabled by appState.isArtistSeparationEnabled.collectAsState()
     val artistSeparators by appState.artistSeparators.collectAsState()
     val activeSkin by appState.activeSkin.collectAsState()
@@ -73,6 +89,21 @@ fun ArtistBioScreen(
         }
     }
     val scrollState = rememberScrollState()
+
+    // Custom Artist Photo Picker
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            appState.updateArtistArtwork(artistName, uri)
+        }
+    }
+
+    // Modal Sheet & Dialog States
+    var selectedTrackForOptions by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForDetails by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForEditTags by remember { mutableStateOf<Track?>(null) }
+    var selectedTrackForPlaylist by remember { mutableStateOf<Track?>(null) }
 
     Box(
         modifier = modifier
@@ -153,7 +184,7 @@ fun ArtistBioScreen(
                     .padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.Bottom
             ) {
-                // 1:1 Square Photo
+                // 1:1 Square Photo with click to change photo
                 Box(
                     modifier = Modifier
                         .size(100.dp)
@@ -161,7 +192,8 @@ fun ArtistBioScreen(
                         .shadow(16.dp, RoundedCornerShape(16.dp))
                         .clip(RoundedCornerShape(16.dp))
                         .background(activeSkin.surfaceColor)
-                        .border(2.dp, HexColors.CobaltBlue, RoundedCornerShape(16.dp)),
+                        .border(2.dp, HexColors.CobaltBlue, RoundedCornerShape(16.dp))
+                        .clickable { photoPickerLauncher.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
                     if (!artistDetails?.squarePhotoUrl.isNullOrBlank()) {
@@ -182,6 +214,24 @@ fun ArtistBioScreen(
                             modifier = Modifier.size(48.dp)
                         )
                     }
+
+                    // Edit badge overlay
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(HexColors.PureBlack.copy(alpha = 0.75f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Change Artist Photo",
+                            tint = HexColors.Lavender,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(16.dp))
@@ -200,6 +250,13 @@ fun ArtistBioScreen(
                         color = HexColors.Lavender,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Tap photo to change image",
+                        color = HexColors.CobaltBlue,
+                        fontSize = 10.sp,
+                        modifier = Modifier.clickable { photoPickerLauncher.launch("image/*") }
                     )
                 }
             }
@@ -305,7 +362,7 @@ fun ArtistBioScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Songs from this artist in the user's library
+            // Songs from this artist in the user's library with Long Press Context Menu
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -334,7 +391,10 @@ fun ArtistBioScreen(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isPlayingThis) HexColors.CobaltBlue.copy(alpha = 0.15f) else Color.Transparent)
-                                .clickable { appState.playTrack(track) }
+                                .combinedClickable(
+                                    onClick = { appState.playTrack(track) },
+                                    onLongClick = { selectedTrackForOptions = track }
+                                )
                                 .padding(vertical = 8.dp, horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -386,6 +446,65 @@ fun ArtistBioScreen(
             }
 
             Spacer(modifier = Modifier.height(40.dp))
+        }
+
+        // Modal Bottom Sheet & Dialogs
+        if (selectedTrackForOptions != null) {
+            val t = selectedTrackForOptions!!
+            TrackOptionsSheet(
+                track = t,
+                isFavorite = favorites.contains(t.id),
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForOptions = null },
+                onViewDetails = { selectedTrackForDetails = t },
+                onEditTags = { selectedTrackForEditTags = t },
+                onAddToPlaylist = { selectedTrackForPlaylist = t },
+                onGoToArtist = { artist -> appState.navigateTo(Screen.ArtistBio(artist)) },
+                onGoToAlbum = { album, artist -> appState.navigateTo(Screen.AlbumDetail(album, artist)) },
+                onToggleFavorite = { appState.toggleFavorite(t) }
+            )
+        }
+
+        if (selectedTrackForDetails != null) {
+            TrackDetailsDialog(
+                track = selectedTrackForDetails!!,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForDetails = null }
+            )
+        }
+
+        if (selectedTrackForEditTags != null) {
+            val t = selectedTrackForEditTags!!
+            EditTagDialog(
+                track = t,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForEditTags = null },
+                onSave = { newTitle, newArtist, newAlbum, newGenre, newYear, newTrackNumber, newArtworkUri, applyToAlbum ->
+                    appState.updateTrackMetadata(
+                        track = t,
+                        newTitle = newTitle,
+                        newArtist = newArtist,
+                        newAlbum = newAlbum,
+                        newGenre = newGenre,
+                        newYear = newYear,
+                        newTrackNumber = newTrackNumber,
+                        newArtworkUri = newArtworkUri,
+                        applyArtworkToAlbum = applyToAlbum
+                    )
+                }
+            )
+        }
+
+        if (selectedTrackForPlaylist != null) {
+            val t = selectedTrackForPlaylist!!
+            AddToPlaylistDialog(
+                track = t,
+                playlists = playlists,
+                activeSkin = activeSkin,
+                onDismiss = { selectedTrackForPlaylist = null },
+                onSelectPlaylist = { plName -> appState.addTrackToPlaylist(plName, t) },
+                onCreatePlaylist = { plName -> appState.createPlaylist(plName, t) }
+            )
         }
     }
 }

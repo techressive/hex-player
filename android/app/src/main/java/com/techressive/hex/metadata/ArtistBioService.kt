@@ -28,6 +28,41 @@ object ArtistBioService {
         return artistPhotos[clean] ?: cache[artistName.trim()]?.squarePhotoUrl
     }
 
+    fun setCustomArtistPhoto(context: Context, artistName: String, photoUriString: String) {
+        val cleanName = artistName.trim()
+        artistPhotos[cleanName.lowercase()] = photoUriString
+        val existing = cache[cleanName]
+        val updated = if (existing != null) {
+            existing.copy(squarePhotoUrl = photoUriString, coverPhotoUrl = photoUriString)
+        } else {
+            ArtistDetails(
+                name = cleanName,
+                squarePhotoUrl = photoUriString,
+                coverPhotoUrl = photoUriString,
+                biography = "$cleanName is an acclaimed recording artist in your HEX music collection.",
+                spotifyMonthlyListeners = "—",
+                instagramFollowers = "—"
+            )
+        }
+        cache[cleanName] = updated
+
+        // Save to disk cache
+        try {
+            val diskCacheDir = File(context.cacheDir, "artist_bio")
+            if (!diskCacheDir.exists()) diskCacheDir.mkdirs()
+            val cacheFile = File(diskCacheDir, "${cleanName.hashCode()}.json")
+            val json = JSONObject().apply {
+                put("name", updated.name)
+                put("squarePhotoUrl", updated.squarePhotoUrl ?: "")
+                put("coverPhotoUrl", updated.coverPhotoUrl ?: "")
+                put("biography", updated.biography)
+                put("spotifyMonthlyListeners", updated.spotifyMonthlyListeners)
+                put("instagramFollowers", updated.instagramFollowers)
+            }
+            cacheFile.writeText(json.toString())
+        } catch (_: Exception) {}
+    }
+
     suspend fun fetchArtistDetails(context: Context, artistName: String): ArtistDetails = withContext(Dispatchers.IO) {
         val cleanName = artistName.trim()
         if (cleanName.isBlank() || cleanName.equals("Unknown Artist", ignoreCase = true)) {

@@ -128,6 +128,15 @@ class AppState(
     private val _playlists = MutableStateFlow<Map<String, List<Track>>>(emptyMap())
     val playlists: StateFlow<Map<String, List<Track>>> = _playlists.asStateFlow()
 
+    // First Launch / Onboarding State
+    private val _hasCompletedOnboarding = MutableStateFlow(false)
+    val hasCompletedOnboarding: StateFlow<Boolean> = _hasCompletedOnboarding.asStateFlow()
+
+    fun setCompletedOnboarding(completed: Boolean) {
+        _hasCompletedOnboarding.value = completed
+        prefs.edit().putBoolean("has_completed_onboarding", completed).apply()
+    }
+
     // Lyrics & Artist Info
     private val _lyrics = MutableStateFlow<List<LyricLine>>(emptyList())
     val lyrics: StateFlow<List<LyricLine>> = _lyrics.asStateFlow()
@@ -367,6 +376,120 @@ class AppState(
         saveCachedLibrary()
     }
 
+    fun updateTrackMetadata(
+        track: Track,
+        newTitle: String,
+        newArtist: String,
+        newAlbum: String,
+        newGenre: String,
+        newYear: Int?,
+        newTrackNumber: Int?,
+        newArtworkUri: Uri?,
+        applyArtworkToAlbum: Boolean = false
+    ) {
+        val updatedTrack = track.copy(
+            title = newTitle.trim().ifBlank { track.title },
+            artist = newArtist.trim().ifBlank { track.artist },
+            album = newAlbum.trim().ifBlank { track.album },
+            genre = newGenre.trim().ifBlank { track.genre },
+            year = newYear ?: track.year,
+            trackNumber = newTrackNumber ?: track.trackNumber,
+            artworkUri = newArtworkUri ?: track.artworkUri
+        )
+
+        val updatedList = _tracks.value.map { t ->
+            if (t.id == track.id) {
+                updatedTrack
+            } else if (applyArtworkToAlbum && newArtworkUri != null && t.album.equals(updatedTrack.album, ignoreCase = true)) {
+                t.copy(artworkUri = newArtworkUri)
+            } else {
+                t
+            }
+        }
+        _tracks.value = updatedList
+        if (_currentTrack.value?.id == track.id) {
+            _currentTrack.value = updatedTrack
+            extractDynamicColors(updatedTrack)
+        }
+        saveCachedLibrary()
+    }
+
+    fun updateAlbumArtwork(albumName: String, artworkUri: Uri) {
+        val updatedList = _tracks.value.map { t ->
+            if (t.album.equals(albumName, ignoreCase = true)) {
+                t.copy(artworkUri = artworkUri)
+            } else {
+                t
+            }
+        }
+        _tracks.value = updatedList
+        val curr = _currentTrack.value
+        if (curr != null && curr.album.equals(albumName, ignoreCase = true)) {
+            val updatedCurr = curr.copy(artworkUri = artworkUri)
+            _currentTrack.value = updatedCurr
+            extractDynamicColors(updatedCurr)
+        }
+        saveCachedLibrary()
+    }
+
+    fun updateArtistArtwork(artistName: String, photoUri: Uri) {
+        ArtistBioService.setCustomArtistPhoto(context, artistName, photoUri.toString())
+        if (_currentScreen.value is Screen.ArtistBio && (_currentScreen.value as Screen.ArtistBio).artistName.equals(artistName, ignoreCase = true)) {
+            loadArtistDetails(artistName)
+        }
+    }
+
+    // Playlist Management
+    fun createPlaylist(name: String, initialTrack: Track? = null) {
+        val cleanName = name.trim()
+        if (cleanName.isBlank()) return
+        val current = _playlists.value.toMutableMap()
+        val list = current[cleanName]?.toMutableList() ?: mutableListOf()
+        if (initialTrack != null && !list.any { it.id == initialTrack.id }) {
+            list.add(initialTrack)
+        }
+        current[cleanName] = list
+        _playlists.value = current
+        savePlaylists()
+    }
+
+    fun addTrackToPlaylist(playlistName: String, track: Track) {
+        val current = _playlists.value.toMutableMap()
+        val list = (current[playlistName] ?: emptyList()).toMutableList()
+        if (!list.any { it.id == track.id }) {
+            list.add(track)
+            current[playlistName] = list
+            _playlists.value = current
+            savePlaylists()
+        }
+    }
+
+    fun removeTrackFromPlaylist(playlistName: String, trackId: String) {
+        val current = _playlists.value.toMutableMap()
+        val list = (current[playlistName] ?: emptyList()).toMutableList()
+        list.removeAll { it.id == trackId }
+        current[playlistName] = list
+        _playlists.value = current
+        savePlaylists()
+    }
+
+    fun deletePlaylist(playlistName: String) {
+        val current = _playlists.value.toMutableMap()
+        current.remove(playlistName)
+        _playlists.value = current
+        savePlaylists()
+    }
+
+    private fun savePlaylists() {
+        val obj = JSONObject()
+        _playlists.value.forEach { (name, tracks) ->
+            val arr = JSONArray()
+            tracks.forEach { arr.put(it.id) }
+            obj.put(name, arr)
+        }
+        prefs.edit().putString("playlists_json", obj.toString()).apply()
+    }
+
     private fun loadLyricsForTrack(track: Track) {
         scope.launch {
             val parsedLyrics = LyricsService.getLyrics(context, track)
@@ -464,6 +587,7 @@ class AppState(
             }
 
             withContext(Dispatchers.Main) {
+                setCompletedOnboarding(true)
                 saveCachedLibrary()
                 _isScanning.value = false
                 autoFetchAllArtistDetails()
@@ -552,6 +676,7 @@ class AppState(
                 put("bitrate", t.bitrate)
                 put("codec", t.codec.name)
                 put("year", t.year ?: 0)
+                put("trackNumber", t.trackNumber ?: 1)
                 put("isHiRes", t.isHiRes)
             }
             arr.put(obj)
@@ -617,6 +742,7 @@ class AppState(
                             album = obj.getString("album"),
                             genre = obj.optString("genre", "Unknown"),
                             year = obj.optInt("year", 0).takeIf { it > 0 },
+                            trackNumber = obj.optInt("trackNumber", 1).takeIf { it > 0 },
                             durationMs = durMs,
                             sampleRate = obj.optDouble("sampleRate", 44100.0),
                             bitDepth = obj.optInt("bitDepth", 16),
@@ -632,5 +758,31 @@ class AppState(
                 }
             } catch (_: Exception) {}
         }
+
+        // Restore Playlists
+        val plJson = prefs.getString("playlists_json", null)
+        if (!plJson.isNullOrBlank()) {
+            try {
+                val obj = JSONObject(plJson)
+                val map = mutableMapOf<String, List<Track>>()
+                val tracksById = _tracks.value.associateBy { it.id }
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val name = keys.next()
+                    val arr = obj.getJSONArray(name)
+                    val plTracks = mutableListOf<Track>()
+                    for (i in 0 until arr.length()) {
+                        val id = arr.getString(i)
+                        tracksById[id]?.let { plTracks.add(it) }
+                    }
+                    map[name] = plTracks
+                }
+                _playlists.value = map
+            } catch (_: Exception) {}
+        }
+
+        // Check onboarding completion
+        val hasCompleted = prefs.getBoolean("has_completed_onboarding", false) || _tracks.value.isNotEmpty()
+        _hasCompletedOnboarding.value = hasCompleted
     }
 }
