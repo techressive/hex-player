@@ -1,12 +1,21 @@
 package com.techressive.hex.audio
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -16,6 +25,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
+import com.techressive.hex.MainActivity
 import com.techressive.hex.metadata.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +36,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 enum class AudioOutputMethod(val displayName: String, val description: String) {
@@ -179,16 +190,152 @@ class HexAudioPlayer(
     private var mediaSession: MediaSession? = null
     private var hasAttemptedStandardFallback = false
 
+    var onSkipNextListener: (() -> Unit)? = null
+    var onSkipPreviousListener: (() -> Unit)? = null
+
+    // Audio Focus Handling (Immediate stop for background media such as Spotify / YouTube)
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus = false
+    private var resumeOnFocusGain = false
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                hasAudioFocus = false
+                resumeOnFocusGain = false
+                pause()
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                hasAudioFocus = false
+                if (_isPlaying.value) {
+                    resumeOnFocusGain = true
+                    pause()
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                exoPlayer?.volume = (_volume.value * 0.2f).coerceAtLeast(0.05f)
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                hasAudioFocus = true
+                exoPlayer?.volume = _volume.value
+                if (resumeOnFocusGain) {
+                    resumeOnFocusGain = false
+                    play()
+                }
+            }
+        }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        if (hasAudioFocus) return true
+        val am = audioManager ?: return false
+
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val playbackAttributes = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(playbackAttributes)
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            audioFocusRequest = request
+            am.requestAudioFocus(request)
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            )
+        }
+
+        hasAudioFocus = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
+        return hasAudioFocus
+    }
+
+    private fun abandonAudioFocus() {
+        if (!hasAudioFocus) return
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(audioFocusChangeListener)
+        }
+        hasAudioFocus = false
+    }
+
     fun getMediaSession(): MediaSession? = mediaSession
 
     private fun bindMediaSession() {
         val p = exoPlayer ?: return
         try {
             mediaSession?.release()
-            mediaSession = MediaSession.Builder(context, p)
+
+            val sessionIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                sessionIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
+            val forwardingPlayer = object : ForwardingPlayer(p) {
+                override fun isCommandAvailable(command: Int): Boolean {
+                    if (command == COMMAND_SEEK_TO_NEXT ||
+                        command == COMMAND_SEEK_TO_NEXT_MEDIA_ITEM ||
+                        command == COMMAND_SEEK_TO_PREVIOUS ||
+                        command == COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
+                        return true
+                    }
+                    return super.isCommandAvailable(command)
+                }
+
+                override fun getAvailableCommands(): Player.Commands {
+                    return super.getAvailableCommands().buildUpon()
+                        .add(COMMAND_SEEK_TO_NEXT)
+                        .add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        .add(COMMAND_SEEK_TO_PREVIOUS)
+                        .add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        .build()
+                }
+
+                override fun seekToNext() {
+                    skipNext()
+                }
+
+                override fun seekToNextMediaItem() {
+                    skipNext()
+                }
+
+                override fun seekToPrevious() {
+                    skipPrevious()
+                }
+
+                override fun seekToPreviousMediaItem() {
+                    skipPrevious()
+                }
+            }
+
+            mediaSession = MediaSession.Builder(context, forwardingPlayer)
                 .setId("HexAudioPlayerSession")
+                .setSessionActivity(pendingIntent)
                 .build()
             activeMediaSession = mediaSession
+
+            HexPlaybackService.instance?.let { service ->
+                mediaSession?.let { s ->
+                    if (!service.sessions.contains(s)) {
+                        service.addSession(s)
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to build MediaSession", e)
         }
@@ -217,6 +364,7 @@ class HexAudioPlayer(
                 } else if (playbackState == Player.STATE_ENDED) {
                     _isPlaying.value = false
                     spectrumAnalyzer.stopSimulation()
+                    skipNext()
                 }
             }
 
@@ -330,6 +478,7 @@ class HexAudioPlayer(
         hasAttemptedStandardFallback = false
         val player = exoPlayer ?: return
         try {
+            requestAudioFocus()
             val mediaItem = buildMediaItem(track)
             player.stop()
             player.clearMediaItems()
@@ -351,7 +500,11 @@ class HexAudioPlayer(
     private fun startPlaybackService() {
         try {
             val intent = Intent(context, HexPlaybackService::class.java)
-            context.startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(context, intent)
+            } else {
+                context.startService(intent)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start HexPlaybackService", e)
         }
@@ -362,9 +515,17 @@ class HexAudioPlayer(
             .setTitle(track.title)
             .setArtist(track.artist)
             .setAlbumTitle(track.album)
+            .setIsPlayable(true)
+
         if (track.artworkUri != null) {
             metadataBuilder.setArtworkUri(track.artworkUri)
         }
+
+        val artworkBytes = loadArtworkBytes(track)
+        if (artworkBytes != null && artworkBytes.isNotEmpty()) {
+            metadataBuilder.setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
+
         val mediaMetadata = metadataBuilder.build()
 
         val uriToPlay = if (track.uri != Uri.EMPTY) {
@@ -385,6 +546,74 @@ class HexAudioPlayer(
             .build()
     }
 
+    private fun loadArtworkBytes(track: Track): ByteArray? {
+        val uri = track.artworkUri
+        if (uri != null) {
+            val bytes = readBytesFromUri(uri)
+            if (bytes != null && bytes.isNotEmpty()) {
+                return compressArtworkIfNeeded(bytes)
+            }
+        }
+
+        return try {
+            val retriever = MediaMetadataRetriever()
+            if (track.uri != Uri.EMPTY && track.uri.scheme == "content") {
+                retriever.setDataSource(context, track.uri)
+            } else if (track.path.isNotBlank()) {
+                retriever.setDataSource(track.path)
+            } else if (track.uri != Uri.EMPTY) {
+                retriever.setDataSource(context, track.uri)
+            } else {
+                null
+            }
+            val embedded = retriever.embeddedPicture
+            retriever.release()
+            if (embedded != null && embedded.isNotEmpty()) {
+                compressArtworkIfNeeded(embedded)
+            } else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun readBytesFromUri(uri: Uri): ByteArray? {
+        return try {
+            when (uri.scheme) {
+                "content" -> context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                "file" -> uri.path?.let { p ->
+                    val f = File(p)
+                    if (f.exists()) f.readBytes() else null
+                }
+                else -> {
+                    val f = File(uri.toString())
+                    if (f.exists()) f.readBytes() else null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun compressArtworkIfNeeded(originalBytes: ByteArray): ByteArray {
+        if (originalBytes.size <= 250 * 1024) return originalBytes
+        return try {
+            val bitmap = BitmapFactory.decodeByteArray(originalBytes, 0, originalBytes.size) ?: return originalBytes
+            val maxDim = 512
+            val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                val (w, h) = if (ratio > 1f) maxDim to (maxDim / ratio).toInt() else (maxDim * ratio).toInt() to maxDim
+                Bitmap.createScaledBitmap(bitmap, w, h, true)
+            } else {
+                bitmap
+            }
+            val stream = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            stream.toByteArray()
+        } catch (_: Exception) {
+            originalBytes
+        }
+    }
+
     fun togglePlayPause() {
         val player = exoPlayer ?: return
         if (player.isPlaying) {
@@ -395,6 +624,7 @@ class HexAudioPlayer(
     }
 
     fun play() {
+        requestAudioFocus()
         exoPlayer?.play()
         _isPlaying.value = true
         startProgressTracking()
@@ -408,11 +638,21 @@ class HexAudioPlayer(
     }
 
     fun skipNext() {
-        exoPlayer?.seekToNextMediaItem()
+        val listener = onSkipNextListener
+        if (listener != null) {
+            scope.launch(Dispatchers.Main) { listener.invoke() }
+        } else {
+            exoPlayer?.seekToNextMediaItem()
+        }
     }
 
     fun skipPrevious() {
-        exoPlayer?.seekToPreviousMediaItem()
+        val listener = onSkipPreviousListener
+        if (listener != null) {
+            scope.launch(Dispatchers.Main) { listener.invoke() }
+        } else {
+            exoPlayer?.seekToPreviousMediaItem()
+        }
     }
 
     fun seekTo(seconds: Double) {
@@ -468,9 +708,13 @@ class HexAudioPlayer(
     }
 
     fun release() {
+        abandonAudioFocus()
         stopProgressTracking()
         spectrumAnalyzer.stopSimulation()
         try {
+            mediaSession?.let { session ->
+                HexPlaybackService.instance?.removeSession(session)
+            }
             mediaSession?.release()
             mediaSession = null
             activeMediaSession = null

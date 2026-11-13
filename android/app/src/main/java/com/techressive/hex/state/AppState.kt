@@ -164,6 +164,8 @@ class AppState(
 
     init {
         audioPlayer.attachEqEngine(eqEngine)
+        audioPlayer.onSkipNextListener = { skipNext() }
+        audioPlayer.onSkipPreviousListener = { skipPrevious() }
         loadPersistedState()
     }
 
