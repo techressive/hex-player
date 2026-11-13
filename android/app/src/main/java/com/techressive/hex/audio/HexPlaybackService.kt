@@ -25,17 +25,21 @@ class HexPlaybackService : MediaSessionService() {
         createNotificationChannels()
 
         HexAudioPlayer.activeMediaSession?.let { session ->
-            if (!sessions.contains(session)) {
-                addSession(session)
-            }
+            try {
+                if (!sessions.contains(session)) {
+                    addSession(session)
+                }
+            } catch (_: Exception) {}
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         HexAudioPlayer.activeMediaSession?.let { session ->
-            if (!sessions.contains(session)) {
-                addSession(session)
-            }
+            try {
+                if (!sessions.contains(session)) {
+                    addSession(session)
+                }
+            } catch (_: Exception) {}
         }
         return super.onStartCommand(intent, flags, startId)
     }
