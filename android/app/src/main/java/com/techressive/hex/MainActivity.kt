@@ -69,6 +69,17 @@ import com.techressive.hex.ui.theme.HexTheme
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        @Volatile
+        private var retainedAppState: AppState? = null
+
+        fun getOrCreateAppState(context: android.content.Context): AppState {
+            return retainedAppState ?: synchronized(this) {
+                retainedAppState ?: AppState(context.applicationContext).also { retainedAppState = it }
+            }
+        }
+    }
+
     private lateinit var appState: AppState
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,14 +87,24 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val perms = mutableListOf<String>()
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+                perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                perms.add(android.Manifest.permission.READ_MEDIA_AUDIO)
+            }
+            if (perms.isNotEmpty()) {
+                requestPermissions(perms.toTypedArray(), 101)
+            }
+        } else {
+            if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE), 101)
             }
         }
 
         setContent {
-            val scope = rememberCoroutineScope()
-            appState = remember { AppState(applicationContext, scope) }
+            appState = remember { getOrCreateAppState(applicationContext) }
 
             val currentScreen by appState.currentScreen.collectAsState()
             val currentTrack by appState.currentTrack.collectAsState()

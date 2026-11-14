@@ -1,17 +1,20 @@
 package com.techressive.hex.metadata
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import java.io.File
+import java.io.FileOutputStream
 
 object AudioMetadataReader {
 
-    fun readTrack(context: Context, uri: Uri): Track? = readMetadata(context, uri)
+    fun readTrack(context: Context, uri: Uri, fileName: String? = null): Track? = readMetadata(context, uri, fileName)
 
-    fun readMetadata(context: Context, uri: Uri): Track {
+    fun readMetadata(context: Context, uri: Uri, fileName: String? = null): Track {
         val retriever = MediaMetadataRetriever()
-        var title = uri.lastPathSegment ?: "Unknown Track"
+        var title = fileName?.substringBeforeLast('.') ?: uri.lastPathSegment ?: "Unknown Track"
         var artist = "Unknown Artist"
         var album = "Unknown Album"
         var genre = "Audiophile Master"
@@ -20,7 +23,7 @@ object AudioMetadataReader {
         var year: Int? = null
         var embeddedPicBytes: ByteArray? = null
 
-        val ext = (uri.path ?: "").substringAfterLast('.', "").lowercase()
+        val ext = (fileName ?: uri.path ?: "").substringAfterLast('.', "").lowercase()
         val codec = when (ext) {
             "flac" -> AudioCodec.FLAC
             "wav" -> AudioCodec.WAV
@@ -98,7 +101,7 @@ object AudioMetadataReader {
 
         var artworkUri: Uri? = null
 
-        // 1. If embedded picture exists in audio file, cache it locally for Coil
+        // 1. If embedded picture exists in audio file, compress and cache it locally for Coil
         if (embeddedPicBytes != null && embeddedPicBytes!!.isNotEmpty()) {
             try {
                 val artCacheDir = File(context.cacheDir, "HEX/artworks").apply { mkdirs() }
@@ -106,7 +109,27 @@ object AudioMetadataReader {
                 val artKey = "${artist.trim()}_${album.trim()}".hashCode().toString()
                 val artFile = File(artCacheDir, "art_$artKey.jpg")
                 if (!artFile.exists() || artFile.length() == 0L) {
-                    artFile.writeBytes(embeddedPicBytes!!)
+                    val rawBytes = embeddedPicBytes!!
+                    val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+                    if (bitmap != null) {
+                        val maxDim = 600
+                        val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                            val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                            val (w, h) = if (ratio > 1f) maxDim to (maxDim / ratio).toInt() else (maxDim * ratio).toInt() to maxDim
+                            Bitmap.createScaledBitmap(bitmap, w, h, true)
+                        } else {
+                            bitmap
+                        }
+                        FileOutputStream(artFile).use { fos ->
+                            scaled.compress(Bitmap.CompressFormat.JPEG, 80, fos)
+                        }
+                        if (scaled != bitmap) {
+                            bitmap.recycle()
+                        }
+                        scaled.recycle()
+                    } else {
+                        artFile.writeBytes(rawBytes)
+                    }
                 }
                 artworkUri = Uri.fromFile(artFile)
             } catch (_: Exception) {}

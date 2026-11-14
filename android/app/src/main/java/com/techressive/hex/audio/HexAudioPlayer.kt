@@ -11,6 +11,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -20,6 +21,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionResult
 import com.techressive.hex.MainActivity
+import com.techressive.hex.metadata.AudioCodec
 import com.techressive.hex.metadata.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,8 +75,8 @@ class HexAudioPlayer(
 
     private val _outputMethod = MutableStateFlow(
         try {
-            AudioOutputMethod.valueOf(prefs.getString(KEY_OUTPUT_METHOD, AudioOutputMethod.AAUDIO.name) ?: AudioOutputMethod.AAUDIO.name)
-        } catch (_: Exception) { AudioOutputMethod.AAUDIO }
+            AudioOutputMethod.valueOf(prefs.getString(KEY_OUTPUT_METHOD, AudioOutputMethod.AUDIOTRACK.name) ?: AudioOutputMethod.AUDIOTRACK.name)
+        } catch (_: Exception) { AudioOutputMethod.AUDIOTRACK }
     )
     val outputMethod: StateFlow<AudioOutputMethod> = _outputMethod.asStateFlow()
 
@@ -87,8 +89,8 @@ class HexAudioPlayer(
 
     private val _sampleFormat = MutableStateFlow(
         try {
-            AudioSampleFormat.valueOf(prefs.getString(KEY_SAMPLE_FORMAT, AudioSampleFormat.FLOAT_32BIT.name) ?: AudioSampleFormat.FLOAT_32BIT.name)
-        } catch (_: Exception) { AudioSampleFormat.FLOAT_32BIT }
+            AudioSampleFormat.valueOf(prefs.getString(KEY_SAMPLE_FORMAT, AudioSampleFormat.AUTO.name) ?: AudioSampleFormat.AUTO.name)
+        } catch (_: Exception) { AudioSampleFormat.AUTO }
     )
     val sampleFormat: StateFlow<AudioSampleFormat> = _sampleFormat.asStateFlow()
 
@@ -274,12 +276,9 @@ class HexAudioPlayer(
 
             override fun onPlayerError(error: PlaybackException) {
                 Log.e(TAG, "ExoPlayer error occurred: ${error.errorCodeName} (${error.errorCode})", error)
-                if ((error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
-                     error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ||
-                     error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED) &&
-                    !hasAttemptedStandardFallback) {
+                if (!hasAttemptedStandardFallback) {
                     hasAttemptedStandardFallback = true
-                    Log.w(TAG, "Audio hardware sink rejected float format. Gracefully falling back to standard 16-bit PCM AudioSink.")
+                    Log.w(TAG, "Audio sink or decoder failure. Gracefully falling back to standard Android AudioTrack pipeline.")
                     fallbackToStandardPlayer()
                     return
                 }
@@ -291,13 +290,20 @@ class HexAudioPlayer(
     }
 
     private fun fallbackToStandardPlayer() {
-        val wasPlaying = _isPlaying.value
         val pos = _currentPosition.value
         val track = currentTrack
         try {
             exoPlayer?.stop()
             exoPlayer?.release()
         } catch (_: Exception) {}
+
+        // Persist safe defaults so next app startup doesn't fail on hardware rejection
+        _outputMethod.value = AudioOutputMethod.AUDIOTRACK
+        _sampleFormat.value = AudioSampleFormat.AUTO
+        prefs.edit()
+            .putString(KEY_OUTPUT_METHOD, AudioOutputMethod.AUDIOTRACK.name)
+            .putString(KEY_SAMPLE_FORMAT, AudioSampleFormat.AUTO.name)
+            .apply()
 
         try {
             val audioAttributes = AudioAttributes.Builder()
@@ -323,9 +329,7 @@ class HexAudioPlayer(
                 if (pos > 0.0) {
                     seekTo(pos)
                 }
-                if (wasPlaying) {
-                    play()
-                }
+                play()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Standard player fallback failed", e)
@@ -340,8 +344,7 @@ class HexAudioPlayer(
             val format = _sampleFormat.value
 
             val enableFloat = format == AudioSampleFormat.FLOAT_32BIT ||
-                    method == AudioOutputMethod.HI_RES_DIRECT ||
-                    method == AudioOutputMethod.AAUDIO
+                    method == AudioOutputMethod.HI_RES_DIRECT
 
             val renderersFactory = object : DefaultRenderersFactory(context) {
                 override fun buildAudioSink(
@@ -444,11 +447,27 @@ class HexAudioPlayer(
             }
         }
 
-        return MediaItem.Builder()
+        val mimeType = when (track.codec) {
+            AudioCodec.FLAC -> MimeTypes.AUDIO_FLAC
+            AudioCodec.WAV -> MimeTypes.AUDIO_WAV
+            AudioCodec.MP3 -> MimeTypes.AUDIO_MPEG
+            AudioCodec.AAC -> MimeTypes.AUDIO_AAC
+            AudioCodec.ALAC -> MimeTypes.AUDIO_ALAC
+            AudioCodec.OGG -> MimeTypes.AUDIO_OGG
+            AudioCodec.OPUS -> MimeTypes.AUDIO_OPUS
+            else -> null
+        }
+
+        val mediaItemBuilder = MediaItem.Builder()
             .setMediaId(track.id)
             .setUri(uriToPlay)
             .setMediaMetadata(mediaMetadata)
-            .build()
+
+        if (mimeType != null) {
+            mediaItemBuilder.setMimeType(mimeType)
+        }
+
+        return mediaItemBuilder.build()
     }
 
     fun togglePlayPause() {

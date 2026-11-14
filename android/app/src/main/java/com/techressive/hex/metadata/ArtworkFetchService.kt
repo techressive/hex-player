@@ -1,6 +1,8 @@
 package com.techressive.hex.metadata
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,9 +66,29 @@ class ArtworkFetchService private constructor(private val context: Context) {
                 } catch (ignored: Exception) {}
             }
 
-            // 2. Save to persistent cache
-            val cachedFile = File(cacheDir, "${track.id}.jpg")
-            FileOutputStream(cachedFile).use { it.write(bytes) }
+            // 2. Save to persistent cache deduplicated by album and compressed
+            val artKey = "art_${track.artist.trim()}_${track.album.trim()}".hashCode().toString()
+            val cachedFile = File(cacheDir, "art_$artKey.jpg")
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bitmap != null) {
+                val maxDim = 600
+                val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                    val ratio = bitmap.width.toFloat() / bitmap.height.toFloat()
+                    val (w, h) = if (ratio > 1f) maxDim to (maxDim / ratio).toInt() else (maxDim * ratio).toInt() to maxDim
+                    Bitmap.createScaledBitmap(bitmap, w, h, true)
+                } else {
+                    bitmap
+                }
+                FileOutputStream(cachedFile).use { fos ->
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 80, fos)
+                }
+                if (scaled != bitmap) {
+                    bitmap.recycle()
+                }
+                scaled.recycle()
+            } else {
+                FileOutputStream(cachedFile).use { it.write(bytes) }
+            }
 
             val uri = Uri.fromFile(cachedFile)
             track.artworkUri = uri

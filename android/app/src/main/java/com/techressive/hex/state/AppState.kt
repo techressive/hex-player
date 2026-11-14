@@ -21,6 +21,7 @@ import com.techressive.hex.metadata.Track
 import com.techressive.hex.ui.theme.HexColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,11 +69,62 @@ enum class HexSkin(
 
 class AppState(
     private val context: Context,
-    val scope: CoroutineScope
+    coroutineScope: CoroutineScope? = null
 ) {
+    val scope: CoroutineScope = coroutineScope ?: CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val spectrumAnalyzer = SpectrumAnalyzer
     val eqEngine = ParametricEQEngine.getInstance(context)
     val audioPlayer = HexAudioPlayer(context, spectrumAnalyzer, scope)
+
+    // Cache Size State
+    private val _cacheSizeMB = MutableStateFlow("0.0 MB")
+    val cacheSizeMB: StateFlow<String> = _cacheSizeMB.asStateFlow()
+
+    fun calculateCacheSize() {
+        scope.launch(Dispatchers.IO) {
+            var totalBytes = 0L
+            val directoriesToMeasure = listOf(
+                File(context.cacheDir, "HEX"),
+                File(context.cacheDir, "coil_cache")
+            )
+            for (dir in directoriesToMeasure) {
+                if (dir.exists()) {
+                    dir.walkTopDown().filter { it.isFile }.forEach {
+                        totalBytes += it.length()
+                    }
+                }
+            }
+            val mb = totalBytes.toDouble() / (1024.0 * 1024.0)
+            val formatted = String.format(java.util.Locale.US, "%.1f MB", mb)
+            withContext(Dispatchers.Main) {
+                _cacheSizeMB.value = formatted
+            }
+        }
+    }
+
+    fun clearAppCache(onComplete: (() -> Unit)? = null) {
+        scope.launch(Dispatchers.IO) {
+            val directoriesToClear = listOf(
+                File(context.cacheDir, "HEX/artworks"),
+                File(context.cacheDir, "HEX/Artwork"),
+                File(context.cacheDir, "HEX/artist_bio"),
+                File(context.cacheDir, "HEX/lyrics"),
+                File(context.cacheDir, "coil_cache")
+            )
+            for (dir in directoriesToClear) {
+                if (dir.exists()) {
+                    try {
+                        dir.deleteRecursively()
+                        dir.mkdirs()
+                    } catch (_: Exception) {}
+                }
+            }
+            calculateCacheSize()
+            withContext(Dispatchers.Main) {
+                onComplete?.invoke()
+            }
+        }
+    }
 
     // Navigation Stack
     private val _currentScreen = MutableStateFlow<Screen>(Screen.Home)
@@ -167,6 +219,7 @@ class AppState(
         audioPlayer.onSkipNextListener = { skipNext() }
         audioPlayer.onSkipPreviousListener = { skipPrevious() }
         loadPersistedState()
+        calculateCacheSize()
     }
 
     fun navigateTo(screen: Screen) {
@@ -618,7 +671,7 @@ class AppState(
                 if (name.endsWith(".flac") || name.endsWith(".wav") || name.endsWith(".alac") ||
                     name.endsWith(".m4a") || name.endsWith(".mp3") || name.endsWith(".aac") ||
                     name.endsWith(".dsf") || name.endsWith(".dff") || name.endsWith(".aiff")) {
-                    val track = AudioMetadataReader.readTrack(context, f.uri)
+                    val track = AudioMetadataReader.readTrack(context, f.uri, f.name)
                     if (track != null) {
                         val baseName = f.name?.substringBeforeLast('.')?.lowercase() ?: ""
                         val lrcDoc = lrcMap[baseName]
